@@ -1,8 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
+# optional first argument is the target directory
+TARGET_DIR=${1:-}
+
+# if a directory was provided, switch into it (and save current dir on the stack)
+if [[ -n "$TARGET_DIR" ]]; then
+  if [[ -d "$TARGET_DIR" ]]; then
+    pushd "$TARGET_DIR" > /dev/null
+  else
+    echo "Error: '$TARGET_DIR' is not a directory." >&2
+    exit 1
+  fi
+fi
+
 # switch to the main branch
 git checkout main
 
 # pull the latest from origin/main
 git pull origin main
+
+# if we previously pushed into a dir, pop back to the original
+if [[ -n "$TARGET_DIR" ]]; then
+  popd > /dev/null
+fi
