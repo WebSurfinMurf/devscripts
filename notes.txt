@@ -1,4 +1,5 @@
-help: Commands are help, debug, git, sharefile
+help: Commands are help, debug, git, cleanup, sharefile
 debug: Docker entry 'tail' '-f' '/dev/null'. 
 git: in repo folder - Pullcode.sh (get code) pushcode.sh <NOTE> (commit code)
 sharefile: give name of file to place on network share \\SHAREDSMA\Flash512\shared
+cleanup: will remove all docker images for a specified project name.
