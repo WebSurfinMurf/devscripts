@@ -1,0 +1,2 @@
+# Interactively remove all stopped containers
+docker container prune
