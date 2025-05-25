@@ -1,43 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-log()   { echo "[INFO]  $*"; }
+# Usage: ./cleanup-containers.sh [name-filter]
+# Default name-filter is "pipeline-runner" if none provided.
+
+TARGET="${1:-pipeline-runner}"
+
+log()  { echo "[INFO]  $*"; }
 error() { echo "[ERROR] $*" >&2; }
 
-# 1) Stop any running pipeline-runner containers
-log "Looking for running pipeline-runner containers..."
-running=$(docker ps --filter "name=pipeline-runner" -q)
+# Inform user of target
+log "Target filter: '$TARGET'"
 
+# 1) Stop running containers matching the target
+log "Searching for running containers matching '$TARGET'..."
+running=$(docker ps --filter "name=${TARGET}" -q)
 if [[ -z "$running" ]]; then
-  log "No running pipeline-runner containers found."
+  log "No running containers found for filter '$TARGET'."
 else
   log "Stopping containers: $running"
   docker stop $running
-  log "Stopped."
+  log "Stopped running containers."
 fi
 
-# 2) Remove all pipeline-runner containers (running or stopped)
-log "Looking for all pipeline-runner containers to remove..."
-all_containers=$(docker ps -a --filter "name=pipeline-runner" -q)
-
+# 2) Remove all containers (running or stopped) matching the target
+log "Searching for all containers matching '$TARGET' to remove..."
+all_containers=$(docker ps -a --filter "name=${TARGET}" -q)
 if [[ -z "$all_containers" ]]; then
-  log "No pipeline-runner containers to remove."
+  log "No containers to remove for filter '$TARGET'."
 else
   log "Removing containers: $all_containers"
   docker rm $all_containers
-  log "Removed."
+  log "Removed containers."
 fi
 
-# 3) Find and remove pipeline-runner images
-log "Looking for pipeline-runner images..."
-images=$(docker images --filter=reference="*pipeline-runner*" -q)
-
+# 3) Find and remove images matching the target
+log "Searching for images matching '*${TARGET}*'..."
+images=$(docker images --filter=reference="*${TARGET}*" -q)
 if [[ -z "$images" ]]; then
-  log "No pipeline-runner images found."
+  log "No images found matching '*${TARGET}*'."
 else
   log "Removing images: $images"
   docker rmi $images
   log "Removed images."
 fi
 
-log "Cleanup complete."
+log "Cleanup complete for target '$TARGET'."
+docker image ls
