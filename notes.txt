@@ -1,4 +1,4 @@
-help: Commands are help, debug,
+help: Commands are help, debug, git, sharefile
 debug: Docker entry 'tail' '-f' '/dev/null'. 
 git: in repo folder - Pullcode.sh (get code) pushcode.sh <NOTE> (commit code)
 sharefile: give name of file to place on network share \\SHAREDSMA\Flash512\shared
