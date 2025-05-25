@@ -1,2 +1,43 @@
-# Interactively remove all stopped containers
-docker container prune
+#!/usr/bin/env bash
+set -euo pipefail
+
+log()   { echo "[INFO]  $*"; }
+error() { echo "[ERROR] $*" >&2; }
+
+# 1) Stop any running pipeline-runner containers
+log "Looking for running pipeline-runner containers..."
+running=$(docker ps --filter "name=pipeline-runner" -q)
+
+if [[ -z "$running" ]]; then
+  log "No running pipeline-runner containers found."
+else
+  log "Stopping containers: $running"
+  docker stop $running
+  log "Stopped."
+fi
+
+# 2) Remove all pipeline-runner containers (running or stopped)
+log "Looking for all pipeline-runner containers to remove..."
+all_containers=$(docker ps -a --filter "name=pipeline-runner" -q)
+
+if [[ -z "$all_containers" ]]; then
+  log "No pipeline-runner containers to remove."
+else
+  log "Removing containers: $all_containers"
+  docker rm $all_containers
+  log "Removed."
+fi
+
+# 3) Find and remove pipeline-runner images
+log "Looking for pipeline-runner images..."
+images=$(docker images --filter=reference="*pipeline-runner*" -q)
+
+if [[ -z "$images" ]]; then
+  log "No pipeline-runner images found."
+else
+  log "Removing images: $images"
+  docker rmi $images
+  log "Removed images."
+fi
+
+log "Cleanup complete."
