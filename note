@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ——————————————————————————————
+# Determine the directory this script lives in
+# ——————————————————————————————
+# Works even if you invoke it via a symlink
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ——————————————————————————————
+# Path to your data file
+# (change data.txt to whatever your file is named)
+# ——————————————————————————————
+DATAFILE="${SCRIPT_DIR}/notes.txt"
+
+# ——————————————————————————————
+# Usage check
+# ——————————————————————————————
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <key>"
+  exit 1
+fi
+
+KEY="$1"
+
+# ——————————————————————————————
+# Lookup via awk: match key before the ":" then print the rest
+# ——————————————————————————————
+awk -F':' -v k="$KEY" '
+  $1 == k { print $2; found=1; exit }
+  END { if (!found) exit 1 }
+' "$DATAFILE"
