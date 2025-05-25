@@ -1,0 +1,37 @@
+#!/bin/sh
+# copy_to_shared.sh
+#
+# Usage: ./copy_to_shared.sh /path/to/source_file
+
+# 1) Check for exactly one argument
+if [ "$#" -ne 1 ]; then
+  echo "Usage: $0 <source_file>"
+  exit 1
+fi
+
+src="$1"
+dest_dir="/mnt/shared/shared"
+
+# 2) Verify source exists
+if [ ! -e "$src" ]; then
+  echo "Error: source file '$src' does not exist."
+  exit 1
+fi
+
+# 3) Ensure destination directory exists
+if [ ! -d "$dest_dir" ]; then
+  echo "Destination directory '$dest_dir' not found; creating it..."
+  mkdir -p "$dest_dir" || {
+    echo "Error: failed to create '$dest_dir'."
+    exit 1
+  }
+fi
+
+# 4) Copy and report
+cp -p "$src" "$dest_dir"/ || {
+  echo "Error: copy failed."
+  exit 1
+}
+
+echo "✓ '$src' copied to '$dest_dir/'"
+exit 0
