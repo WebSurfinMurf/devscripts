@@ -16,12 +16,8 @@ DATAFILE="${SCRIPT_DIR}/notes.txt"
 # ——————————————————————————————
 # Usage check
 # ——————————————————————————————
-if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <key>"
-  exit 1
-fi
-
-KEY="$1"
+# default to "help" if no argument supplied
+KEY="${1:-help}"
 
 # ——————————————————————————————
 # Lookup via awk: match key before the ":" then print the rest
