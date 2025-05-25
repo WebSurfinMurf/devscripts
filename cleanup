@@ -3,7 +3,6 @@ set -euo pipefail
 
 # Usage: ./cleanup-containers.sh [name-filter]
 # Default name-filter is "pipeline-runner" if none provided.
-
 TARGET="${1:-pipeline-runner}"
 
 log()  { echo "[INFO]  $*"; }
@@ -34,14 +33,17 @@ else
   log "Removed containers."
 fi
 
-# 3) Find and remove images matching the target
-log "Searching for images matching '*${TARGET}*'..."
-images=$(docker images --filter=reference="*${TARGET}*" -q)
+# 3) Find and remove images matching the target in the repository path
+log "Searching for images where the repository name equals or contains '$TARGET'..."
+# Build list of matching image IDs from repository names
+images=$(docker images --format '{{.Repository}} {{.ID}}' |
+  awk -v t="$TARGET" '$1 == t || $1 ~ "/"t {print $2}')
+
 if [[ -z "$images" ]]; then
-  log "No images found matching '*${TARGET}*'."
+  log "No images found matching '$TARGET'."
 else
-  log "Removing images: $images"
-  docker rmi $images
+  log "Removing images (force): $images"
+  docker rmi -f $images
   log "Removed images."
 fi
 
