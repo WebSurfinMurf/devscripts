@@ -1,40 +1,43 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: ./update_repo.sh <commit-message> [directory]
+# Usage: pushcode <commit-message> <GitHub-project-name>
+# Example: pushcode "Fix typo in README" MyNewApp
 
-if [ $# -lt 1 ]; then
-  echo "Usage: $0 <commit-message> [directory]"
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <commit-message> <GitHub-project-name>"
   exit 1
 fi
 
 COMMIT_MSG="$1"
-TARGET_DIR="${2:-}"
+PROJECT="$2"
+BASE_DIR="${HOME}/projects"
+TARGET_DIR="${BASE_DIR}/${PROJECT}"
+DEFAULT_BRANCH="main"
 
-# If a directory was provided, switch into it
-if [[ -n "$TARGET_DIR" ]]; then
-  if [[ -d "$TARGET_DIR" ]]; then
-    pushd "$TARGET_DIR" > /dev/null
-  else
-    echo "Error: '$TARGET_DIR' is not a directory." >&2
-    exit 1
-  fi
+echo "🔧 pushcode → ${TARGET_DIR}"
+
+# Ensure the target dir exists
+if [ ! -d "${TARGET_DIR}" ]; then
+  echo "Error: Project directory '${TARGET_DIR}' does not exist." >&2
+  exit 1
 fi
 
-# Switch to main branch and update
-git checkout main
-git pull origin main
+cd "${TARGET_DIR}"
 
-# Stage all changes
+# Sync before pushing
+echo "⏬ Pulling latest changes on '${DEFAULT_BRANCH}'..."
+git checkout "${DEFAULT_BRANCH}"
+git pull --ff-only origin "${DEFAULT_BRANCH}"
+
+# Stage, commit, and push
+echo "📝 Staging all changes..."
 git add --all
 
-# Commit with provided message
-git commit -m "$COMMIT_MSG"
+echo "💬 Committing with message: ${COMMIT_MSG}"
+git commit -m "${COMMIT_MSG}"
 
-# Push back to origin
-git push origin main
+echo "🚀 Pushing to origin/${DEFAULT_BRANCH}..."
+git push origin "${DEFAULT_BRANCH}"
 
-# Return to original directory if we pushed into one
-if [[ -n "$TARGET_DIR" ]]; then
-  popd > /dev/null
-fi
+echo "✅ pushcode complete for project '${PROJECT}'."
