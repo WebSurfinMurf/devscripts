@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
-# optional first argument is the target directory
-TARGET_DIR=${1:-}
-
-# if a directory was provided, switch into it (and save current dir on the stack)
-if [[ -n "$TARGET_DIR" ]]; then
-  if [[ -d "$TARGET_DIR" ]]; then
-    pushd "$TARGET_DIR" > /dev/null
-  else
-    echo "Error: '$TARGET_DIR' is not a directory." >&2
-    exit 1
-  fi
+# check for required project name
+if [ $# -ne 1 ]; then
+  echo "Usage: $0 <GitHub-project-name>"
+  echo "Example: $0 MyNewApp"
+  exit 1
 fi
 
-# switch to the main branch
-git checkout main
+PROJECT="$1"
+BASE_DIR="${HOME}/projects"
+TARGET_DIR="${BASE_DIR}/${PROJECT}"
+REPO_SSH="git@github.com:WebSurfinMurf/${PROJECT}.git"
+DEFAULT_BRANCH="main"
 
-# pull the latest from origin/main
-git pull origin main
+echo "🔧 pullcode for '${PROJECT}' → ${TARGET_DIR}"
 
-# if we previously pushed into a dir, pop back to the original
-if [[ -n "$TARGET_DIR" ]]; then
-  popd > /dev/null
+if [ -d "${TARGET_DIR}/.git" ]; then
+  # existing repo: pull updates
+  echo "📂 Found existing repo; pulling latest on '${DEFAULT_BRANCH}'…"
+  cd "${TARGET_DIR}"
+  git fetch --depth=1 origin "${DEFAULT_BRANCH}"
+  git checkout "${DEFAULT_BRANCH}"
+  git reset --hard "origin/${DEFAULT_BRANCH}"
+  echo "✅ Updated ${PROJECT} to latest ${DEFAULT_BRANCH}."
+else
+  # new clone
+  echo "📂 Directory not found; cloning ${PROJECT} via SSH…"
+  mkdir -p "${TARGET_DIR}"
+  git clone --depth 1 --branch "${DEFAULT_BRANCH}" "${REPO_SSH}" "${TARGET_DIR}"
+  echo "✅ Cloned ${PROJECT} into ${TARGET_DIR}."
 fi
