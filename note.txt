@@ -1,7 +1,7 @@
 commands: note, pushcode, pullcode, cleanup, sharefile
-debug: In portainer, for  entry set: tail -f /dev/null
-sharefile: command give name of file to place on network share \\SHAREDSMA\Flash512\shared
-cleanup: command will remove all docker images for a specified project name.
+portainer note: to debug set entry set: tail -f /dev/null
+sharefile <file>             : copy target file to network share \\SHAREDSMA\Flash512\shared
+cleanup                      : command will remove all docker images for a specified project name.
 pullcode    <project>        : Pull the latest code for that project from git
 pushcode    <project> <note> : Push the code locally to git, and increment version.  optional note
 versioncode <project> <note> : adds version label to all code in a project, optional note
