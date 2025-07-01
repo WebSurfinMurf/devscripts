@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
-# Usage: versioncode <GitHub-project-name> [-major|-minor] [release-description]
+# Usage: versioncode <GitHub-project-name> [-major|-stable] [release-description]
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <GitHub-project-name> [-major|-minor] [release-description]"
+  echo "Usage: $0 <GitHub-project-name> [-major|-stable] [release-description]"
   exit 1
 fi
 
@@ -11,19 +11,19 @@ fi
 PROJECT="$1"
 shift
 
-# Defaults
-MODE="minor"               # default bump type
+# Default settings
+MODE="patch"               # 'patch' (default), 'stable', or 'major'
 DESC="na"                  # default description
 
-# Parse flags and description
+# Parse optional flags and description
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -major|--major)
       MODE="major"
       shift
       ;;
-    -minor|--minor)
-      MODE="minor"
+    -stable|--stable)
+      MODE="stable"
       shift
       ;;
     *)
@@ -39,12 +39,6 @@ BASE_DIR="${HOME}/projects"
 TARGET_DIR="${BASE_DIR}/${PROJECT}"
 REPO_SSH="git@github.com:${OWNER}/${PROJECT}.git"
 DEFAULT_BRANCH="main"
-
-# Validate MODE
-if [[ "$MODE" != "major" && "$MODE" != "minor" ]]; then
-  echo "Error: mode must be 'major' or 'minor'"
-  exit 1
-fi
 
 echo "🔧 versioncode for '${PROJECT}' at ${TARGET_DIR} (mode: ${MODE}, desc: '${DESC}')"
 
@@ -71,22 +65,43 @@ fi
 ver=${latest_tag#v}
 IFS='.' read -r major minor patch <<< "$ver"
 
-# Compute new version base
-if [[ "$MODE" == "major" ]]; then
-  new_major=$((major+1)); new_minor=0; release_type="Major"
-else
-  new_major=$major; new_minor=$((minor+1)); release_type="Minor"
-fi
-new_patch=0
+# Compute new version based on MODE
+case "$MODE" in
+  major)
+    new_major=$((major + 1))
+    new_minor=0
+    new_patch=0
+    bump_desc="Major"
+    ;;
+  stable)
+    new_major=$major
+    new_minor=$((minor + 1))
+    new_patch=0
+    bump_desc="Stable"
+    ;;
+  *) # patch
+    new_major=$major
+    new_minor=$minor
+    new_patch=$((patch + 1))
+    bump_desc="Patch"
+    ;;
+esac
 
-# Auto-increment patch to avoid duplicates
+# Auto-increment if tag exists (for stable and patch bumps)
 new_tag="v${new_major}.${new_minor}.${new_patch}"
-while git rev-parse --quiet --verify "refs/tags/${new_tag}" >/dev/null; do
-  new_patch=$((new_patch+1))
-  new_tag="v${new_major}.${new_minor}.${new_patch}"
-done
+if [[ "$MODE" != "major" ]]; then
+  while git rev-parse --quiet --verify "refs/tags/${new_tag}" >/dev/null; do
+    if [[ "$MODE" == "stable" ]]; then
+      new_minor=$((new_minor + 1))
+      new_patch=0
+    else
+      new_patch=$((new_patch + 1))
+    fi
+    new_tag="v${new_major}.${new_minor}.${new_patch}"
+  done
+fi
 
-echo "🆕 ${release_type} bump: ${latest_tag} → ${new_tag}"
+echo "🆕 ${bump_desc} bump: ${latest_tag} → ${new_tag}"
 
 # Annotated tag & push
 git tag -a "${new_tag}" -m "${DESC}"
