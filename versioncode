@@ -10,8 +10,8 @@ if [[ $# -lt 1 || $# -gt 3 ]]; then
 fi
 
 PROJECT="$1"
-MODE="${2:-minor}"                    # bump type: 'major' or 'minor'
-DESC="${3:-na}"                       # release description
+MODE="${2:-minor}"    # bump type: 'major' or 'minor'
+DESC="${3:-na}"       # release description (or "na")
 BASE_DIR="${HOME}/projects"
 TARGET_DIR="${BASE_DIR}/${PROJECT}"
 REPO_SSH="git@github.com:WebSurfinMurf/${PROJECT}.git"
@@ -25,57 +25,60 @@ fi
 
 echo "🔧 versioncode for '${PROJECT}' in ${TARGET_DIR} (mode: $MODE, desc: \"$DESC\")"
 
-# 0. Ensure local clone exists
+# 0. Clone if needed
 if [[ ! -d "${TARGET_DIR}/.git" ]]; then
   mkdir -p "${BASE_DIR}"
   git clone "${REPO_SSH}" "${TARGET_DIR}"
 fi
-
 cd "${TARGET_DIR}"
 
-# 1. Sync default branch & tags
+# 1. Sync branch & tags
 git fetch origin --tags
 git checkout "${DEFAULT_BRANCH}"
 git pull origin "${DEFAULT_BRANCH}"
 
-# 2. Grab latest tag (assumes tags are vMAJOR.MINOR.PATCH)
-if git describe --tags --abbrev=0 >/dev/null 2>&1; then
-  last_tag=$(git describe --tags --abbrev=0)
-else
-  echo "⚠️  No existing tags found; starting from v0.0.0"
-  last_tag="v0.0.0"
+# 2. Find latest semantic tag
+latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname | tail -n1 || true)
+if [[ -z "$latest_tag" ]]; then
+  echo "⚠️  No existing v* tags found; starting from v0.0.0"
+  latest_tag="v0.0.0"
 fi
 
-# 3. Split into numeric parts
-ver=${last_tag#v}
+# 3. Split into numbers
+ver=${latest_tag#v}
 IFS='.' read -r major minor patch <<< "$ver"
 
-# 4. Bump version
+# 4. Compute MAJOR/MINOR bump, start PATCH at 0
 if [[ "$MODE" == "major" ]]; then
   new_major=$((major + 1))
   new_minor=0
-  new_patch=0
   release_type="Major"
 else
   new_major=$major
   new_minor=$((minor + 1))
-  new_patch=0
   release_type="Minor"
 fi
+new_patch=0
 
+# 5. Auto-increment patch until tag is unique
 new_tag="v${new_major}.${new_minor}.${new_patch}"
-echo "🆕 ${release_type} bump: ${last_tag} → ${new_tag}"
+while git rev-parse --quiet --verify "refs/tags/${new_tag}" >/dev/null; do
+  new_patch=$((new_patch + 1))
+  new_tag="v${new_major}.${new_minor}.${new_patch}"
+done
 
-# 5. Create & push git tag
+echo "🆕 ${release_type} bump: ${latest_tag} → ${new_tag}"
+
+# 6. Tag & push
 git tag "${new_tag}"
 git push origin "${new_tag}"
 
-# 6. Create GitHub release if gh CLI is available
-if ! command -v gh >/dev/null 2>&1; then
-  echo "⚠️  gh CLI not found; skipping GitHub release step."
-else
+# 7. Create GitHub Release if gh CLI is installed
+if command -v gh >/dev/null 2>&1; then
   gh release create "${new_tag}" \
     --title "${release_type} release ${new_tag}" \
     --notes "${DESC}"
   echo "✅ Released ${new_tag} on GitHub with description: ${DESC}"
+else
+  echo "⚠️  gh CLI not found; skipping GitHub release step."
 fi
