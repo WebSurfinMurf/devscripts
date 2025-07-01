@@ -1,37 +1,73 @@
-# … after tagging and pushing …
+#!/usr/bin/env bash
+set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
-# 7. Create GitHub Release via gh, then hit, then curl
-api_url="https://api.github.com/repos/${OWNER}/${PROJECT}/releases"
-payload=$(cat <<EOF
-{"tag_name":"${new_tag}","name":"${release_type} release ${new_tag}","body":"${DESC}"}
-EOF
-)
-
-if command -v gh >/dev/null 2>&1; then
-  gh release create "${new_tag}" \
-    --title "${release_type} release ${new_tag}" \
-    --notes "${DESC}"
-  echo "✅ Released ${new_tag} via gh"
-
-elif command -v hit >/dev/null 2>&1; then
-  # Using HTTPie under the alias `hit`
-  hit POST "${api_url}" \
-    "Authorization: token ${GITHUB_TOKEN}" \
-    "Content-Type: application/json" \
-    tag_name=="${new_tag}" \
-    name=="${release_type} release ${new_tag}" \
-    body=="${DESC}" \
-    --quiet
-  echo "✅ Released ${new_tag} via hit"
-
-elif [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  # Fallback to curl
-  curl -sSf -X POST "${api_url}" \
-    -H "Authorization: token ${GITHUB_TOKEN}" \
-    -H "Content-Type: application/json" \
-    --data "${payload}" >/dev/null
-  echo "✅ Released ${new_tag} via GitHub API"
-
-else
-  echo "❌ No gh, no hit, and no GITHUB_TOKEN; skipping release creation."
+# Usage: versioncode <GitHub-project-name> [major|minor] [release-description]
+if [[ $# -lt 1 || $# -gt 3 ]]; then
+  echo "Usage: $0 <GitHub-project-name> [major|minor] [release-description]"
+  echo "  major|minor         # defaults to 'minor'"
+  echo "  release-description # defaults to 'na'"
+  exit 1
 fi
+
+PROJECT="$1"
+MODE="${2:-minor}"               # bump type: 'major' or 'minor'
+DESC="${3:-na}"                  # release description
+OWNER="WebSurfinMurf"
+BASE_DIR="${HOME}/projects"
+TARGET_DIR="${BASE_DIR}/${PROJECT}"
+REPO_SSH="git@github.com:${OWNER}/${PROJECT}.git"
+DEFAULT_BRANCH="main"
+
+# Validate MODE
+if [[ "$MODE" != "major" && "$MODE" != "minor" ]]; then
+  echo "Error: second argument must be 'major' or 'minor'"
+  exit 1
+fi
+
+echo "🔧 versioncode for '${PROJECT}' in ${TARGET_DIR} (mode: $MODE, desc: \"$DESC\")"
+
+# Clone if missing
+if [[ ! -d "${TARGET_DIR}/.git" ]]; then
+  mkdir -p "$(dirname "${TARGET_DIR}")"
+  git clone "${REPO_SSH}" "${TARGET_DIR}"
+fi
+cd "${TARGET_DIR}"
+
+# Sync branch & tags
+git fetch origin --tags
+git checkout "${DEFAULT_BRANCH}"
+git pull --ff-only origin "${DEFAULT_BRANCH}"
+
+# Find latest semantic tag
+latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname | tail -n1 || true)
+if [[ -z "$latest_tag" ]]; then
+  echo "⚠️  No tags found; starting at v0.0.0"
+  latest_tag="v0.0.0"
+fi
+
+# Split numeric parts
+ver=${latest_tag#v}
+IFS='.' read -r major minor patch <<< "$ver"
+
+# Compute bump
+if [[ "$MODE" == "major" ]]; then
+  new_major=$((major+1)); new_minor=0; release_type="Major"
+else
+  new_major=$major; new_minor=$((minor+1)); release_type="Minor"
+fi
+new_patch=0
+
+# Auto-increment patch
+new_tag="v${new_major}.${new_minor}.${new_patch}"
+while git rev-parse --quiet --verify "refs/tags/${new_tag}" >/dev/null; do
+  new_patch=$((new_patch+1))
+  new_tag="v${new_major}.${new_minor}.${new_patch}"
+done
+
+echo "🆕 ${release_type} bump: ${latest_tag} → ${new_tag}"
+
+# Annotated tag & push
+git tag -a "${new_tag}" -m "${DESC}"
+git push origin "${new_tag}"
+
+echo "✅ Created annotated tag ${new_tag} with message: ${DESC}"
