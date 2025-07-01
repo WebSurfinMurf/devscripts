@@ -1,43 +1,78 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euo pipefail   # Strict mode
 
-# Usage: pushcode <commit-message> <GitHub-project-name>
-# Example: pushcode "Fix typo in README" MyNewApp
+# Usage: pushcode <GitHub-project-name> [release-description]
+# Example: pushcode MyApp "Fixed bug in auth"
 
-if [ $# -ne 2 ]; then
-  echo "Usage: $0 <commit-message> <GitHub-project-name>"
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <GitHub-project-name> [release-description]"
   exit 1
 fi
 
-COMMIT_MSG="$1"
-PROJECT="$2"
+# Required project name
+PROJECT="$1"
+shift
+
+# Release description defaults to 'na'
+DESC="${1:-na}"
+
+# Variables
+OWNER="WebSurfinMurf"
 BASE_DIR="${HOME}/projects"
 TARGET_DIR="${BASE_DIR}/${PROJECT}"
+REPO_SSH="git@github.com:${OWNER}/${PROJECT}.git"
 DEFAULT_BRANCH="main"
 
-echo "🔧 pushcode → ${TARGET_DIR}"
+echo "🔧 pushcode for '${PROJECT}' at ${TARGET_DIR} (desc: '${DESC}')"
 
-# Ensure the target dir exists
-if [ ! -d "${TARGET_DIR}" ]; then
+# Ensure repo exists
+if [[ ! -d "${TARGET_DIR}/.git" ]]; then
   echo "Error: Project directory '${TARGET_DIR}' does not exist." >&2
   exit 1
 fi
-
 cd "${TARGET_DIR}"
 
-# Sync before pushing
-echo "⏬ Pulling latest changes on '${DEFAULT_BRANCH}'..."
+# Sync branch & tags
+echo "⏬ Fetching and checking out '${DEFAULT_BRANCH}'..."
+git fetch origin --tags
 git checkout "${DEFAULT_BRANCH}"
 git pull --ff-only origin "${DEFAULT_BRANCH}"
 
-# Stage, commit, and push
-echo "📝 Staging all changes..."
+# Stage all changes
+echo "📝 Staging changes..."
 git add --all
 
-echo "💬 Committing with message: ${COMMIT_MSG}"
-git commit -m "${COMMIT_MSG}"
+# Commit with provided description or placeholder
+echo "💬 Committing with message: '${DESC}'"
+git commit -m "${DESC}"
 
-echo "🚀 Pushing to origin/${DEFAULT_BRANCH}..."
-git push origin "${DEFAULT_BRANCH}"
+# Find latest semantic tag
+latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname | tail -n1 || true)
+if [[ -z "$latest_tag" ]]; then
+  latest_tag="v0.0.0"
+  echo "⚠️  No tags found; starting at ${latest_tag}"
+fi
 
-echo "✅ pushcode complete for project '${PROJECT}'."
+# Parse version
+ver=${latest_tag#v}
+IFS='.' read -r major minor patch <<< "$ver"
+
+# Bump patch level (0.0.X)
+new_major=$major
+new_minor=$minor
+new_patch=$((patch + 1))
+new_tag="v${new_major}.${new_minor}.${new_patch}"
+
+# Avoid duplicate tags
+while git rev-parse --quiet --verify "refs/tags/${new_tag}" >/dev/null; do
+  new_patch=$((new_patch + 1))
+  new_tag="v${new_major}.${new_minor}.${new_patch}"
+done
+
+echo "🆕 Tagging ${new_tag}..."
+
+# Annotated tag & push
+git tag -a "${new_tag}" -m "${DESC}"
+git push origin "${new_tag}"
+
+echo "✅ pushcode complete: tagged ${new_tag} with message '${DESC}'"
