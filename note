@@ -1,28 +1,25 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
 # ——————————————————————————————
-# Determine the directory this script lives in
+# Determine the directory this script lives in (resolves symlinks)
 # ——————————————————————————————
-# Works even if you invoke it via a symlink
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ——————————————————————————————
-# Path to your data file
-# (change data.txt to whatever your file is named)
+# Path to your data file (note.txt in same directory)
 # ——————————————————————————————
-DATAFILE="${SCRIPT_DIR}/notes.txt"
+DATAFILE="${SCRIPT_DIR}/note.txt"
 
 # ——————————————————————————————
-# Usage check
+# Ensure the data file exists
 # ——————————————————————————————
-# default to "help" if no argument supplied
-KEY="${1:-help}"
+if [[ ! -f "$DATAFILE" ]]; then
+  echo "Error: note.txt not found in ${SCRIPT_DIR}" >&2
+  exit 1
+fi
 
 # ——————————————————————————————
-# Lookup via awk: match key before the ":" then print the rest
+# Display the entire contents of note.txt
 # ——————————————————————————————
-awk -F':' -v k="$KEY" '
-  $1 == k { print $2; found=1; exit }
-  END { if (!found) exit 1 }
-' "$DATAFILE"
+cat "$DATAFILE"
