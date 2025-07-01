@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail   # exit on error, undefined var, or pipeline failure
+
+# Usage check
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "Usage: $0 <GitHub-project-name> [release]"
+  echo "  release   # optional; if present, bumps MAJOR (else bumps MINOR)"
+  exit 1
+fi
+
+PROJECT="$1"
+MODE="${2:-}"               # if $2 == "release" → major bump
+BASE_DIR="${HOME}/projects"
+TARGET_DIR="${BASE_DIR}/${PROJECT}"
+REPO_SSH="git@github.com:WebSurfinMurf/${PROJECT}.git"
+DEFAULT_BRANCH="main"
+
+echo "🔧 versioncode for '${PROJECT}' in ${TARGET_DIR}"
+
+# 0. Ensure local clone exists
+if [[ ! -d "${TARGET_DIR}/.git" ]]; then
+  mkdir -p "${BASE_DIR}"
+  git clone "${REPO_SSH}" "${TARGET_DIR}"
+fi
+
+cd "${TARGET_DIR}"
+
+# 1. Sync default branch & tags
+git fetch origin --tags
+git checkout "${DEFAULT_BRANCH}"
+git pull origin "${DEFAULT_BRANCH}"
+
+# 2. Grab latest tag (assumes tags are vMAJOR.MINOR.PATCH)
+if git describe --tags --abbrev=0 >/dev/null 2>&1; then
+  last_tag=$(git describe --tags --abbrev=0)
+else
+  echo "⚠️  No existing tags found; starting from v0.0.0"
+  last_tag="v0.0.0"
+fi
+
+# 3. Split into parts
+ver=${last_tag#v}
+IFS='.' read -r major minor patch <<< "$ver"
+
+# 4. Bump version
+if [[ "${MODE}" == "release" ]]; then
+  new_major=$((major + 1))
+  new_minor=0
+  new_patch=0
+  release_type="Major"
+else
+  new_major=$major
+  new_minor=$((minor + 1))
+  new_patch=0
+  release_type="Minor"
+fi
+new_tag="v${new_major}.${new_minor}.${new_patch}"
+
+echo "🆕 ${release_type} bump: ${last_tag} → ${new_tag}"
+
+# 5. Create & push git tag
+git tag "${new_tag}"
+git push origin "${new_tag}"
+
+# 6. Create GitHub release
+gh release create "${new_tag}" \
+  --title "${release_type} release ${new_tag}" \
+  --notes "🚀 ${release_type} bump to ${new_tag} – describe your changes here."
+
+echo "✅ Released ${new_tag} on GitHub"
