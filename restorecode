@@ -54,15 +54,25 @@ fi
 
 echo "🔧 restorecode for '${PROJECT}' at ${TARGET_DIR} (tag: '${TAG}')"
 
-# Checkout and merge
+# Checkout default branch
 echo "🌿 Checking out '${DEFAULT_BRANCH}'…"
 git checkout "${DEFAULT_BRANCH}"
 
-echo "🔗 Fast-forward merging tag '${TAG}'…"
-git merge --ff-only "${TAG}"
+# Create a backup branch before reset
+timestamp=$(date +'%Y%m%d%H%M%S')
+backup_branch="${DEFAULT_BRANCH}-backup-${timestamp}"
+echo "📦 Creating backup branch '${backup_branch}'…"
+git branch "${backup_branch}"
 
-# Push the restored state
-echo "🚀 Pushing '${DEFAULT_BRANCH}' to origin…"
-git push origin "${DEFAULT_BRANCH}"
+echo "🚀 Pushing backup branch to origin…"
+git push origin "${backup_branch}"
 
-echo "✅ restorecode complete: '${DEFAULT_BRANCH}' is now at '${TAG}'"
+# Hard reset to the chosen tag
+echo "🔄 Resetting '${DEFAULT_BRANCH}' to tag '${TAG}'…"
+git reset --hard "${TAG}"
+
+# Force push the reset state
+echo "🚀 Force-pushing '${DEFAULT_BRANCH}' to origin…"
+git push --force-with-lease origin "${DEFAULT_BRANCH}"
+
+echo "✅ restorecode complete: '${DEFAULT_BRANCH}' reset to '${TAG}' with backup at '${backup_branch}'"
