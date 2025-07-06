@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail   # Strict mode
+IFS=$'\n\t'
+
+# Usage: restorecode <GitHub-project-name> [tag]
+# Example: restorecode MyApp v1.2.3
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <GitHub-project-name> [tag]"
+  exit 1
+fi
+
+# Required project name
+PROJECT="$1"
+shift
+
+# Tag to restore (default: latest semantic version tag)
+TAG="${1:-}"
+
+# Environment / path settings
+OWNER="WebSurfinMurf"
+BASE_DIR="${HOME}/projects"
+TARGET_DIR="${BASE_DIR}/${PROJECT}"
+DEFAULT_BRANCH="main"
+
+echo "🔧 restorecode for '${PROJECT}' at ${TARGET_DIR} (tag: '${TAG:-<latest>}')"
+
+# Ensure repo exists
+if [[ ! -d "${TARGET_DIR}/.git" ]]; then
+  echo "Error: Project directory '${TARGET_DIR}' does not exist." >&2
+  exit 1
+fi
+cd "${TARGET_DIR}"
+
+# Fetch all tags and branches
+echo "⏬ Fetching from origin (branches & tags)…"
+git fetch origin --tags
+
+# Determine tag if not provided
+if [[ -z "$TAG" ]]; then
+  echo "🔍 No tag provided; selecting latest semver tag…"
+  TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname | tail -n1 || true)
+  if [[ -z "$TAG" ]]; then
+    echo "⚠️  No semantic tags found; please specify a tag."
+    exit 1
+  fi
+  echo "ℹ️  Latest tag is '${TAG}'"
+fi
+
+# Checkout and merge
+echo "🌿 Checking out '${DEFAULT_BRANCH}'…"
+git checkout "${DEFAULT_BRANCH}"
+
+echo "🔗 Fast-forward merging tag '${TAG}'…"
+git merge --ff-only "${TAG}"
+
+# Push the restored state
+echo "🚀 Pushing '${DEFAULT_BRANCH}' to origin…"
+git push origin "${DEFAULT_BRANCH}"
+
+echo "✅ restorecode complete: '${DEFAULT_BRANCH}' is now at '${TAG}'"
