@@ -14,16 +14,11 @@ fi
 PROJECT="$1"
 shift
 
-# Tag to restore (default: latest semantic version tag)
-TAG="${1:-}"
-
 # Environment / path settings
 OWNER="WebSurfinMurf"
 BASE_DIR="${HOME}/projects"
 TARGET_DIR="${BASE_DIR}/${PROJECT}"
 DEFAULT_BRANCH="main"
-
-echo "🔧 restorecode for '${PROJECT}' at ${TARGET_DIR} (tag: '${TAG:-<latest>}')"
 
 # Ensure repo exists
 if [[ ! -d "${TARGET_DIR}/.git" ]]; then
@@ -36,16 +31,23 @@ cd "${TARGET_DIR}"
 echo "⏬ Fetching from origin (branches & tags)…"
 git fetch origin --tags
 
-# Determine tag if not provided
-if [[ -z "$TAG" ]]; then
-  echo "🔍 No tag provided; selecting latest semver tag…"
-  TAG=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname | tail -n1 || true)
+# Determine tag
+if [[ -n "${1-}" ]]; then
+  TAG="$1"
+else
+  # List available versions
+  echo "🔍 Available versions:"
+  git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname
+  echo
+  # Prompt user
+  read -p "Enter version to restore: " TAG
   if [[ -z "$TAG" ]]; then
-    echo "⚠️  No semantic tags found; please specify a tag."
+    echo "⚠️  No version entered; aborting."
     exit 1
   fi
-  echo "ℹ️  Latest tag is '${TAG}'"
 fi
+
+echo "🔧 restorecode for '${PROJECT}' at ${TARGET_DIR} (tag: '${TAG}')"
 
 # Checkout and merge
 echo "🌿 Checking out '${DEFAULT_BRANCH}'…"
