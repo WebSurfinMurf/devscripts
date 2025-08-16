@@ -1,0 +1,40 @@
+#!/bin/bash
+# Enhanced startclaude script
+# Usage: 
+#   startclaude           - Start Claude Code
+#   startclaude --shell   - Enter container shell
+#   startclaude --status  - Show container status
+
+case "${1:-}" in
+    --shell|-s)
+        echo "🐚 Entering Claude Code container shell..."
+        docker exec -it claude-code bash
+        ;;
+    --status|--info|-i)
+        echo "📊 Claude Code Status:"
+        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "NAMES|claude-code"
+        echo ""
+        echo "💾 Container size:"
+        docker system df | grep -E "REPOSITORY|claude-code"
+        ;;
+    --help|-h)
+        echo "🤖 Claude Code Launcher"
+        echo ""
+        echo "Usage:"
+        echo "  startclaude           Start Claude Code CLI"
+        echo "  startclaude --shell   Enter container shell"
+        echo "  startclaude --status  Show container status"
+        echo "  startclaude --help    Show this help"
+        ;;
+    *)
+        # Default: start Claude
+        if ! docker ps --format '{{.Names}}' | grep -q '^claude-code$'; then
+            echo "❌ claude-code container is not running"
+            echo "💡 Start it with: cd /home/websurfinmurf/projects/claude-code && ./deploy.sh"
+            exit 1
+        fi
+        
+        echo "🚀 Starting Claude Code..."
+        docker exec -it claude-code claude "$@"
+        ;;
+esac
