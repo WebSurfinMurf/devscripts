@@ -21,6 +21,8 @@ _This section is updated by Claude during each session_
   - Shows full path being processed
   - Continues even if one repo fails
 - Issue: pushcode may hang when running 'all' - needs investigation
+- Modified pushcode to detect and skip directories with .nogit marker file
+- Updated pushcode to NOT create/push tags when there are no changes to commit
 - Updated cleanup script
   - Removed default "pipeline-runner" target
   - Now requires explicit container name filter
