@@ -1,15 +1,68 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: ./cleanup-containers.sh [name-filter]
-# Default name-filter is "pipeline-runner" if none provided.
-TARGET="${1:-pipeline-runner}"
+# Usage: ./cleanup [name-filter]
+# If no filter provided, shows usage and lists containers with size info
+if [[ $# -eq 0 ]]; then
+  echo "Usage: $0 <container-name-filter>"
+  echo ""
+  echo "Current containers and their disk usage:"
+  echo "========================================="
+  
+  # Check if any containers exist
+  container_count=$(docker ps -a -q 2>/dev/null | wc -l)
+  
+  if [[ $container_count -eq 0 ]]; then
+    echo "No containers found on this system."
+    echo ""
+    echo "Docker status:"
+    docker version --format "Client: {{.Client.Version}} | Server: {{.Server.Version}}" 2>/dev/null || echo "Docker not accessible"
+  else
+    # Show containers with size
+    docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Size}}\t{{.Image}}"
+    
+    echo ""
+    echo "Space usage summary:"
+    echo "--------------------"
+    echo "Total containers: $container_count"
+    running_count=$(docker ps -q 2>/dev/null | wc -l)
+    stopped_count=$(docker ps -a -q --filter "status=exited" 2>/dev/null | wc -l)
+    echo "Running: $running_count | Stopped: $stopped_count"
+  fi
+  
+  # Show total reclaimable space
+  echo ""
+  echo "Docker disk usage:"
+  docker system df 2>/dev/null || echo "Unable to get disk usage"
+  
+  echo ""
+  echo "Examples:"
+  echo "  $0 my-app     # Remove my-app container and possibly its image"
+  echo "  $0 test       # Remove all containers with 'test' in the name"
+  echo ""
+  echo "Tip: Use 'docker system prune -a' to clean all unused containers, images, and networks"
+  exit 0
+fi
+
+TARGET="$1"
 
 log()  { echo "[INFO]  $*"; }
 error() { echo "[ERROR] $*" >&2; }
 
 # Inform user of target
 log "Target filter: '$TARGET'"
+
+# Show what will be cleaned
+echo ""
+echo "Containers to be removed:"
+matching=$(docker ps -a --filter "name=${TARGET}" -q 2>/dev/null | wc -l)
+if [[ $matching -eq 0 ]]; then
+  echo "No containers match filter '$TARGET'"
+  exit 0
+else
+  docker ps -a --filter "name=${TARGET}" --format "table {{.Names}}\t{{.Status}}\t{{.Size}}\t{{.Image}}"
+fi
+echo ""
 
 # 1) Stop running containers matching the target
 log "Searching for running containers matching '$TARGET'..."
@@ -48,5 +101,7 @@ else
 fi
 
 log "Cleanup complete for target '$TARGET'."
-docker image prune
+docker image prune -f
+echo ""
+echo "Remaining images:"
 docker image ls

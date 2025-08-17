@@ -21,6 +21,15 @@ _This section is updated by Claude during each session_
   - Shows full path being processed
   - Continues even if one repo fails
 - Issue: pushcode may hang when running 'all' - needs investigation
+- Updated cleanup script
+  - Removed default "pipeline-runner" target
+  - Now requires explicit container name filter
+  - Shows usage and lists containers when run without parameters
+  - Added forced prune after cleanup
+  - Enhanced to show container sizes and cleanup impact
+  - Shows which images would be removed vs kept
+  - Displays Docker system disk usage summary
+  - Shows preview of what will be removed before cleanup
 
 ## Known Issues & TODOs
 - pushcode 'all' appears to hang - possibly waiting for git credentials or SSH key passphrase

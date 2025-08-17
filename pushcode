@@ -202,6 +202,13 @@ if [[ "${PROJECT}" == "all" ]]; then
   for dir in "${BASE_DIR}"/*/; do
     if [[ -d "${dir}/.git" ]]; then
       repo_name=$(basename "${dir}")
+      
+      # Skip directories with .nogit marker file
+      if [[ -f "${dir}/.nogit" ]]; then
+        echo "⚠️  Skipping '${repo_name}' (has .nogit marker - excluded from git)"
+        continue
+      fi
+      
       echo "════════════════════════════════════════════════════════════"
       echo "📍 Processing: ${dir}"
       echo "════════════════════════════════════════════════════════════"
