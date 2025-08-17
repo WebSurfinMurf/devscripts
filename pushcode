@@ -51,6 +51,13 @@ push_single_project() {
   export GIT_CONFIG_COUNT=1
   export GIT_CONFIG_KEY_0="safe.directory"
   export GIT_CONFIG_VALUE_0="${target_dir}"
+  
+  # Skip fetch/pull for projects with .nofetch marker
+  SKIP_FETCH=false
+  if [[ -f "${target_dir}/.nofetch" ]]; then
+    echo "   ℹ️  Skipping fetch/pull (.nofetch marker found)"
+    SKIP_FETCH=true
+  fi
 
   # Check if it's a git repo
   if [[ ! -d ".git" ]]; then
@@ -121,19 +128,21 @@ push_single_project() {
       git remote add origin "${github_url}"
     fi
     
-    # Fetch latest changes with timeout
-    echo "⏬ Fetching latest changes (10 second timeout)..."
-    timeout 10 git fetch origin --tags 2>&1
-    FETCH_EXIT=$?
-    if [ $FETCH_EXIT -eq 124 ]; then
-      echo "⚠️  Fetch timed out after 10 seconds. Possible causes:"
-      echo "    - Network connectivity issues"
-      echo "    - SSH key authentication hanging"
-      echo "    - Repository not accessible"
-      echo "    Continuing without fetch..."
-    elif [ $FETCH_EXIT -ne 0 ]; then
-      echo "⚠️  Could not fetch (exit code: $FETCH_EXIT). Repository might not exist on GitHub yet."
-      echo "    Continuing anyway..."
+    # Fetch latest changes with timeout (increased to 20 seconds)
+    if [[ "$SKIP_FETCH" != "true" ]]; then
+      echo "⏬ Fetching latest changes..."
+      timeout 20 git fetch origin --tags 2>&1
+      FETCH_EXIT=$?
+      if [ $FETCH_EXIT -eq 124 ]; then
+        echo "⚠️  Fetch timed out after 20 seconds. Possible causes:"
+        echo "    - Network connectivity issues"
+        echo "    - SSH key authentication hanging"
+        echo "    - Repository not accessible"
+        echo "    Continuing without fetch..."
+      elif [ $FETCH_EXIT -ne 0 ]; then
+        echo "⚠️  Could not fetch (exit code: $FETCH_EXIT). Repository might not exist on GitHub yet."
+        echo "    Continuing anyway..."
+      fi
     fi
     
     # Get current branch
@@ -146,14 +155,16 @@ push_single_project() {
     fi
     
     # Try to pull if remote branch exists (with timeout for ls-remote)
-    if timeout 5 git ls-remote --heads origin "${DEFAULT_BRANCH}" 2>/dev/null | grep -q "${DEFAULT_BRANCH}"; then
-      echo "📥 Pulling latest from origin/${DEFAULT_BRANCH} (10 second timeout)..."
-      timeout 10 git pull --ff-only origin "${DEFAULT_BRANCH}" 2>&1
-      PULL_EXIT=$?
-      if [ $PULL_EXIT -eq 124 ]; then
-        echo "⚠️  Pull timed out after 10 seconds. Continuing without pull..."
-      elif [ $PULL_EXIT -ne 0 ]; then
-        echo "⚠️  Cannot fast-forward (exit code: $PULL_EXIT). You may need to merge or rebase manually."
+    if [[ "$SKIP_FETCH" != "true" ]]; then
+      if timeout 10 git ls-remote --heads origin "${DEFAULT_BRANCH}" 2>/dev/null | grep -q "${DEFAULT_BRANCH}"; then
+        echo "📥 Pulling latest from origin/${DEFAULT_BRANCH}..."
+        timeout 20 git pull --ff-only origin "${DEFAULT_BRANCH}" 2>&1
+        PULL_EXIT=$?
+        if [ $PULL_EXIT -eq 124 ]; then
+          echo "⚠️  Pull timed out after 20 seconds. Continuing without pull..."
+        elif [ $PULL_EXIT -ne 0 ]; then
+          echo "⚠️  Cannot fast-forward (exit code: $PULL_EXIT). You may need to merge or rebase manually."
+        fi
       fi
     fi
   fi
