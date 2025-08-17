@@ -40,6 +40,11 @@ push_single_project() {
   fi
 
   cd "${target_dir}"
+  
+  # Add safe.directory to avoid ownership issues
+  export GIT_CONFIG_COUNT=1
+  export GIT_CONFIG_KEY_0="safe.directory"
+  export GIT_CONFIG_VALUE_0="${target_dir}"
 
   # Check if it's a git repo
   if [[ ! -d ".git" ]]; then
