@@ -1,9 +1,16 @@
 #!/bin/bash
-# Enhanced startclaude script
+# Enhanced startclaude script with context bootstrapping
 # Usage: 
-#   startclaude           - Start Claude Code
+#   startclaude           - Start Claude Code with context
 #   startclaude --shell   - Enter container shell
 #   startclaude --status  - Show container status
+#   startclaude --resume  - Resume previous conversation
+
+# Color codes
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
 case "${1:-}" in
     --shell|-s)
@@ -17,24 +24,64 @@ case "${1:-}" in
         echo "💾 Container size:"
         docker system df | grep -E "REPOSITORY|claude-code"
         ;;
+    --resume|-r)
+        echo "📂 Resuming previous conversation..."
+        docker exec -it claude-code claude --resume
+        ;;
     --help|-h)
         echo "🤖 Claude Code Launcher"
         echo ""
         echo "Usage:"
-        echo "  startclaude           Start Claude Code CLI"
+        echo "  startclaude           Start Claude Code CLI with context"
         echo "  startclaude --shell   Enter container shell"
         echo "  startclaude --status  Show container status"
+        echo "  startclaude --resume  Resume previous conversation"
         echo "  startclaude --help    Show this help"
+        echo ""
+        echo "Context files:"
+        echo "  /home/claude/workspace/AINotes/AINotes.md - Main environment documentation"
+        echo "  */CLAUDE.md - Project-specific notes in each directory"
         ;;
     *)
-        # Default: start Claude
+        # Default: start Claude with context bootstrap
         if ! docker ps --format '{{.Names}}' | grep -q '^claude-code$'; then
             echo "❌ claude-code container is not running"
             echo "💡 Start it with: cd /home/websurfinmurf/projects/claude-code && ./deploy.sh"
             exit 1
         fi
         
-        echo "🚀 Starting Claude Code..."
-        docker exec -it claude-code claude "$@"
+        echo -e "${BLUE}🚀 Starting Claude Code with context...${NC}"
+        echo ""
+        
+        # Create a context prompt to bootstrap Claude
+        CONTEXT_PROMPT="Please read the following context files to understand the environment:
+
+1. First, read /home/claude/workspace/AINotes/AINotes.md - this contains comprehensive environment documentation
+2. Check for CLAUDE.md files in the current working directory and /home/claude/workspace/devscripts/CLAUDE.md
+3. Note the critical rules section in AINotes.md about workspace separation and no backup files in git
+
+After reading these files, briefly confirm you've loaded the context by listing:
+- The date of the last session from AINotes.md
+- Any known issues from CLAUDE.md files
+- The critical rules you must follow
+
+Then wait for my next instruction."
+
+        # Check if we should use --resume
+        if [[ -f ~/.config/claude/config.json ]]; then
+            echo -e "${YELLOW}💡 Tip: Use 'startclaude --resume' to continue your last conversation${NC}"
+            echo ""
+        fi
+        
+        # Start Claude with the context prompt
+        if [[ "$#" -eq 0 ]]; then
+            # No additional arguments, send context prompt
+            echo -e "${GREEN}📚 Bootstrapping with environment context...${NC}"
+            echo ""
+            echo "$CONTEXT_PROMPT" | docker exec -i claude-code claude
+        else
+            # User provided arguments, just pass them through
+            docker exec -it claude-code claude "$@"
+        fi
         ;;
 esac
