@@ -128,20 +128,40 @@ push_single_project() {
       git remote add origin "${github_url}"
     fi
     
-    # Fetch latest changes with timeout (increased to 20 seconds)
+    # Fetch latest changes with timeout and retry logic
     if [[ "$SKIP_FETCH" != "true" ]]; then
       echo "⏬ Fetching latest changes..."
-      timeout 20 git fetch origin --tags 2>&1
-      FETCH_EXIT=$?
-      if [ $FETCH_EXIT -eq 124 ]; then
-        echo "⚠️  Fetch timed out after 20 seconds. Possible causes:"
+      FETCH_SUCCESS=false
+      RETRY_COUNT=0
+      MAX_RETRIES=3
+      
+      while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ]; do
+        if [ $RETRY_COUNT -gt 0 ]; then
+          WAIT_TIME=$((RETRY_COUNT * 2))
+          echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+          sleep $WAIT_TIME
+        fi
+        
+        timeout 20 git fetch origin --tags 2>&1
+        FETCH_EXIT=$?
+        
+        if [ $FETCH_EXIT -eq 0 ]; then
+          FETCH_SUCCESS=true
+        elif [ $FETCH_EXIT -eq 124 ]; then
+          echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 20 seconds"
+        else
+          echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
+        fi
+        
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+      done
+      
+      if [ "$FETCH_SUCCESS" = "false" ]; then
+        echo "⚠️  Fetch failed after $MAX_RETRIES attempts. Possible causes:"
         echo "    - Network connectivity issues"
         echo "    - SSH key authentication hanging"
         echo "    - Repository not accessible"
         echo "    Continuing without fetch..."
-      elif [ $FETCH_EXIT -ne 0 ]; then
-        echo "⚠️  Could not fetch (exit code: $FETCH_EXIT). Repository might not exist on GitHub yet."
-        echo "    Continuing anyway..."
       fi
     fi
     
@@ -262,6 +282,12 @@ if [[ "${PROJECT}" == "all" ]]; then
       }
       
       echo ""
+      
+      # Small delay between repos to avoid overwhelming GitHub
+      if [[ -d "${BASE_DIR}"/*/.git ]]; then
+        echo "   ⏸️  Pausing 2 seconds before next repository..."
+        sleep 2
+      fi
     fi
   done
   
