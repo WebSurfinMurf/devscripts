@@ -53,7 +53,7 @@ case "${1:-}" in
         echo -e "${BLUE}🚀 Starting Claude Code with context...${NC}"
         echo ""
         
-        # Create a context prompt to bootstrap Claude
+        # Create a context prompt file that Claude will read
         CONTEXT_PROMPT="Please read the following context files to understand the environment:
 
 1. First, read /home/claude/workspace/AINotes/AINotes.md - this contains comprehensive environment documentation
@@ -69,21 +69,16 @@ After reading these files, briefly confirm you've loaded the context by listing:
 
 Then wait for my next instruction."
 
-        # Check if we should use --resume
-        if [[ -f ~/.config/claude/config.json ]]; then
-            echo -e "${YELLOW}💡 Tip: Use 'startclaude --resume' to continue your last conversation${NC}"
-            echo ""
-        fi
+        # Create the init message file
+        docker exec claude-code bash -c "cat > /tmp/claude_init.txt << 'EOF'
+$CONTEXT_PROMPT
+EOF"
         
-        # Start Claude with the context prompt
-        if [[ "$#" -eq 0 ]]; then
-            # No additional arguments, send context prompt
-            echo -e "${GREEN}📚 Bootstrapping with environment context...${NC}"
-            echo ""
-            echo "$CONTEXT_PROMPT" | docker exec -i claude-code claude
-        else
-            # User provided arguments, just pass them through
-            docker exec -it claude-code claude "$@"
-        fi
+        echo -e "${GREEN}📚 Context prepared. Starting interactive session...${NC}"
+        echo -e "${YELLOW}→ Auto-loading environment context...${NC}"
+        echo ""
+        
+        # Start Claude interactively with the init message
+        docker exec -it claude-code bash -c "cat /tmp/claude_init.txt && echo '' && exec claude"
         ;;
 esac
