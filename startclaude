@@ -58,10 +58,12 @@ case "${1:-}" in
 
 1. First, read /home/claude/workspace/AINotes/AINotes.md - this contains comprehensive environment documentation
 2. Check for CLAUDE.md files in the current working directory and /home/claude/workspace/devscripts/CLAUDE.md
-3. Note the critical rules section in AINotes.md about workspace separation and no backup files in git
+3. Check for recent session notes in /home/claude/workspace/AINotes/claude/ directory
+4. Note the critical rules section in AINotes.md about workspace separation and no backup files in git
 
 After reading these files, briefly confirm you've loaded the context by listing:
 - The date of the last session from AINotes.md
+- Any recent session notes from AINotes/claude/
 - Any known issues from CLAUDE.md files
 - The critical rules you must follow
 

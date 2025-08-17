@@ -1,0 +1,99 @@
+#!/bin/bash
+# Claude session management helper
+# Usage: claude-session [save|list|clear|context]
+
+SESSIONS_DIR="$HOME/projects/AINotes/claude"
+CURRENT_SESSION="$SESSIONS_DIR/$(date +%Y-%m-%d_%H-%M-%S).md"
+
+# Color codes
+BLUE='\033[0;34m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+# Ensure sessions directory exists
+mkdir -p "$SESSIONS_DIR"
+
+case "${1:-save}" in
+    save)
+        echo -e "${GREEN}=¾ Saving session notes...${NC}"
+        
+        # Create session summary
+        cat > "$CURRENT_SESSION" << EOF
+# Claude Session - $(date '+%Y-%m-%d %H:%M:%S')
+
+## Environment State
+- Working Directory: $(pwd)
+- Active Containers: $(docker ps --format "{{.Names}}" | grep -E "claude|traefik|mailu" | tr '\n' ', ')
+- Git Status Summary:
+$(cd ~/projects && for dir in */; do [[ -d "$dir/.git" ]] && echo "  - $dir: $(cd "$dir" && git status --porcelain | wc -l) changes"; done)
+
+## Session Tasks
+$(docker exec claude-code cat /home/claude/.claude/session_tasks.md 2>/dev/null || echo "No tasks recorded")
+
+## Important Commands Run
+$(history | tail -20)
+
+## Notes for Next Session
+- Check CLAUDE.md files for project-specific updates
+- Review AINotes.md for environment changes
+- Use 'startclaude --resume' to continue conversations
+
+---
+Generated: $(date)
+EOF
+        
+        echo -e "${GREEN} Session saved to: $CURRENT_SESSION${NC}"
+        ;;
+        
+    list)
+        echo -e "${BLUE}=Ú Recent Claude Sessions:${NC}"
+        ls -lt "$SESSIONS_DIR"/*.md 2>/dev/null | head -10 | awk '{print "  - " $9}'
+        ;;
+        
+    clear)
+        echo -e "${YELLOW}   Clear all session files? (y/N)${NC}"
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            rm -f "$SESSIONS_DIR"/*.md
+            echo -e "${GREEN} Session files cleared${NC}"
+        else
+            echo -e "${BLUE}Cancelled${NC}"
+        fi
+        ;;
+        
+    context)
+        # Generate context summary for Claude
+        echo -e "${BLUE}=Ë Generating context summary...${NC}"
+        
+        CONTEXT_FILE="$SESSIONS_DIR/context_summary.md"
+        cat > "$CONTEXT_FILE" << EOF
+# Claude Context Summary - $(date '+%Y-%m-%d')
+
+## Recent Work (Last 5 Sessions)
+$(ls -t "$SESSIONS_DIR"/*.md 2>/dev/null | head -5 | while read -r file; do
+    echo "### $(basename "$file" .md)"
+    grep -A5 "## Session Tasks" "$file" 2>/dev/null || echo "No tasks found"
+    echo ""
+done)
+
+## Current Environment Status
+$(docker ps --format "table {{.Names}}\t{{.Status}}" | head -10)
+
+## Key Files Modified Recently
+$(find ~/projects -name "*.md" -type f -mtime -1 2>/dev/null | head -10)
+
+EOF
+        echo -e "${GREEN} Context summary saved to: $CONTEXT_FILE${NC}"
+        echo -e "${YELLOW}=¡ Tip: Have Claude read this file to catch up on recent work${NC}"
+        ;;
+        
+    *)
+        echo -e "${RED}Usage: claude-session [save|list|clear|context]${NC}"
+        echo "  save    - Save current session notes"
+        echo "  list    - List recent sessions"
+        echo "  clear   - Clear all session files"
+        echo "  context - Generate context summary for Claude"
+        ;;
+esac

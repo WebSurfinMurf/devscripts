@@ -92,3 +92,13 @@ _This section is updated by Claude during each session_
 # Version all projects (major bump)
 ./versioncode all -major "Major release"
 ```
+
+### Session: 2025-08-17 (Session 3)
+- Added cleanup-github-repos.sh script for removing sensitive files from git
+- Script updated to use /home/websurfinmurf/projects paths
+- Added comprehensive .gitignore file
+
+### Session: 2025-08-17 (Session 3 Final)
+- Session storage relocated to AINotes/claude/ for organization
+- All session management scripts updated with new paths
+- Ready for claude-code restart with proper context persistence
