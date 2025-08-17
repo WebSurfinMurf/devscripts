@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail   # Strict mode
 
-# Usage: pushcode <GitHub-project-name> [release-description]
+# Usage: pushcode <GitHub-project-name|all> [release-description]
 # Example: pushcode MyApp "Fixed bug in auth"
+#          pushcode all "Weekly updates"
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <GitHub-project-name> [release-description]"
+  echo "Usage: $0 <GitHub-project-name|all> [release-description]"
+  echo "  Use 'all' to push all git repositories in projects directory"
   exit 1
 fi
 
@@ -19,168 +21,203 @@ DESC="${1:-}"
 # Variables
 OWNER="WebSurfinMurf"  # Fixed: was \OWNER
 BASE_DIR="${HOME}/projects"
-TARGET_DIR="${BASE_DIR}/${PROJECT}"
 DEFAULT_BRANCH="main"
-GITHUB_URL="git@github.com:${OWNER}/${PROJECT}.git"
 
-echo "🔧 pushcode for '${PROJECT}' at ${TARGET_DIR}"
-
-# Check if this is a new or existing project
-if [[ ! -d "${TARGET_DIR}" ]]; then
-  echo "❌ Error: Project directory '${TARGET_DIR}' does not exist."
-  echo "   Please create the directory and files first."
-  exit 1
-fi
-
-cd "${TARGET_DIR}"
-
-# Check if it's a git repo
-if [[ ! -d ".git" ]]; then
-  echo "📦 Initializing new Git repository..."
-  git init
-  git branch -M "${DEFAULT_BRANCH}"
+# Function to push a single project
+push_single_project() {
+  local project_name="$1"
+  local description="$2"
+  local target_dir="${BASE_DIR}/${project_name}"
+  local github_url="git@github.com:${OWNER}/${project_name}.git"
   
-  # Set default description for new repos
-  DESC="${DESC:-Initial commit}"
-  
-  # Create README if it doesn't exist
-  if [[ ! -f "README.md" ]]; then
-    echo "# ${PROJECT}" > README.md
-    echo "" >> README.md
-    echo "Project created on $(date)" >> README.md
+  echo "🔧 pushcode for '${project_name}' at ${target_dir}"
+
+  # Check if this is a new or existing project
+  if [[ ! -d "${target_dir}" ]]; then
+    echo "❌ Error: Project directory '${target_dir}' does not exist."
+    echo "   Please create the directory and files first."
+    return 1
   fi
-  
-  # Add all files
-  git add --all
-  
-  # Initial commit
-  if ! git diff --cached --quiet; then
-    git commit -m "${DESC}"
-  fi
-  
-  # Add remote origin
-  echo "🔗 Adding GitHub remote..."
-  git remote add origin "${GITHUB_URL}" 2>/dev/null || {
-    echo "   Remote already exists, updating URL..."
-    git remote set-url origin "${GITHUB_URL}"
-  }
-  
-  # Create repo on GitHub using gh CLI if available
-  if command -v gh &> /dev/null; then
-    echo "📤 Creating repository on GitHub..."
-    gh repo create "${OWNER}/${PROJECT}" --private --source=. --push || {
-      echo "   Repository might already exist, trying to push..."
-      git push -u origin "${DEFAULT_BRANCH}" || {
-        echo "⚠️  Could not push. You may need to create the repo on GitHub first:"
-        echo "   https://github.com/new"
-        echo "   Name: ${PROJECT}"
-        echo "   Then run this script again."
-        exit 1
-      }
-    }
-  else
-    echo "⚠️  GitHub CLI not found. Attempting to push..."
-    echo "   If this fails, create the repo manually at: https://github.com/new"
-    git push -u origin "${DEFAULT_BRANCH}" 2>/dev/null || {
-      echo ""
-      echo "📝 To create the repository:"
-      echo "   1. Go to: https://github.com/new"
-      echo "   2. Repository name: ${PROJECT}"
-      echo "   3. Set as Private or Public"
-      echo "   4. DO NOT initialize with README"
-      echo "   5. Click 'Create repository'"
-      echo "   6. Run this script again"
-      exit 1
-    }
-  fi
-else
-  # Existing repository
-  DESC="${DESC:-Update}"
-  
-  # Check if remote exists
-  if ! git remote | grep -q origin; then
+
+  cd "${target_dir}"
+
+  # Check if it's a git repo
+  if [[ ! -d ".git" ]]; then
+    echo "📦 Initializing new Git repository..."
+    git init
+    git branch -M "${DEFAULT_BRANCH}"
+    
+    # Set default description for new repos
+    description="${description:-Initial commit}"
+    
+    # Create README if it doesn't exist
+    if [[ ! -f "README.md" ]]; then
+      echo "# ${project_name}" > README.md
+      echo "" >> README.md
+      echo "Project created on $(date)" >> README.md
+    fi
+    
+    # Add all files
+    git add --all
+    
+    # Initial commit
+    if ! git diff --cached --quiet; then
+      git commit -m "${description}"
+    fi
+    
+    # Add remote origin
     echo "🔗 Adding GitHub remote..."
-    git remote add origin "${GITHUB_URL}"
-  fi
-  
-  # Fetch latest changes
-  echo "⏬ Fetching latest changes..."
-  git fetch origin --tags 2>/dev/null || {
-    echo "⚠️  Could not fetch. Repository might not exist on GitHub yet."
-  }
-  
-  # Get current branch
-  current_branch=$(git branch --show-current)
-  
-  # If not on main, switch to it
-  if [[ "$current_branch" != "${DEFAULT_BRANCH}" ]]; then
-    echo "🔄 Switching to ${DEFAULT_BRANCH} branch..."
-    git checkout -b "${DEFAULT_BRANCH}" 2>/dev/null || git checkout "${DEFAULT_BRANCH}"
-  fi
-  
-  # Try to pull if remote branch exists
-  if git ls-remote --heads origin "${DEFAULT_BRANCH}" | grep -q "${DEFAULT_BRANCH}"; then
-    echo "📥 Pulling latest from origin/${DEFAULT_BRANCH}..."
-    git pull --ff-only origin "${DEFAULT_BRANCH}" || {
-      echo "⚠️  Cannot fast-forward. You may need to merge or rebase manually."
+    git remote add origin "${github_url}" 2>/dev/null || {
+      echo "   Remote already exists, updating URL..."
+      git remote set-url origin "${github_url}"
     }
+    
+    # Create repo on GitHub using gh CLI if available
+    if command -v gh &> /dev/null; then
+      echo "📤 Creating repository on GitHub..."
+      gh repo create "${OWNER}/${project_name}" --private --source=. --push || {
+        echo "   Repository might already exist, trying to push..."
+        git push -u origin "${DEFAULT_BRANCH}" || {
+          echo "⚠️  Could not push. You may need to create the repo on GitHub first:"
+          echo "   https://github.com/new"
+          echo "   Name: ${project_name}"
+          echo "   Then run this script again."
+          return 1
+        }
+      }
+    else
+      echo "⚠️  GitHub CLI not found. Attempting to push..."
+      echo "   If this fails, create the repo manually at: https://github.com/new"
+      git push -u origin "${DEFAULT_BRANCH}" 2>/dev/null || {
+        echo ""
+        echo "📝 To create the repository:"
+        echo "   1. Go to: https://github.com/new"
+        echo "   2. Repository name: ${project_name}"
+        echo "   3. Set as Private or Public"
+        echo "   4. DO NOT initialize with README"
+        echo "   5. Click 'Create repository'"
+        echo "   6. Run this script again"
+        return 1
+      }
+    fi
+  else
+    # Existing repository
+    description="${description:-Update}"
+    
+    # Check if remote exists
+    if ! git remote | grep -q origin; then
+      echo "🔗 Adding GitHub remote..."
+      git remote add origin "${github_url}"
+    fi
+    
+    # Fetch latest changes
+    echo "⏬ Fetching latest changes..."
+    git fetch origin --tags 2>/dev/null || {
+      echo "⚠️  Could not fetch. Repository might not exist on GitHub yet."
+    }
+    
+    # Get current branch
+    current_branch=$(git branch --show-current)
+    
+    # If not on main, switch to it
+    if [[ "$current_branch" != "${DEFAULT_BRANCH}" ]]; then
+      echo "🔄 Switching to ${DEFAULT_BRANCH} branch..."
+      git checkout -b "${DEFAULT_BRANCH}" 2>/dev/null || git checkout "${DEFAULT_BRANCH}"
+    fi
+    
+    # Try to pull if remote branch exists
+    if git ls-remote --heads origin "${DEFAULT_BRANCH}" | grep -q "${DEFAULT_BRANCH}"; then
+      echo "📥 Pulling latest from origin/${DEFAULT_BRANCH}..."
+      git pull --ff-only origin "${DEFAULT_BRANCH}" || {
+        echo "⚠️  Cannot fast-forward. You may need to merge or rebase manually."
+      }
+    fi
   fi
-fi
 
-# Stage all changes
-echo "📝 Staging all changes..."
-git add --all
+  # Stage all changes
+  echo "📝 Staging all changes..."
+  git add --all
 
-# Commit if there are changes
-if git diff --cached --quiet; then
-  echo "⚠️  No changes to commit."
-else
-  echo "💬 Committing with message: '${DESC}'"
-  git commit -m "${DESC}"
-  
-  echo "🚀 Pushing commits to origin/${DEFAULT_BRANCH}..."
-  git push origin "${DEFAULT_BRANCH}"
-fi
-
-# Tagging logic (only for existing repos with history)
-if git rev-parse --verify HEAD~1 &>/dev/null; then
-  # Find latest semantic tag
-  latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname | tail -n1 || true)
-  
-  if [[ -z "$latest_tag" ]]; then
-    latest_tag="v0.0.0"
-    echo "📌 No version tags found; starting at ${latest_tag}"
+  # Commit if there are changes
+  if git diff --cached --quiet; then
+    echo "⚠️  No changes to commit."
+  else
+    echo "💬 Committing with message: '${description}'"
+    git commit -m "${description}"
+    
+    echo "🚀 Pushing commits to origin/${DEFAULT_BRANCH}..."
+    git push origin "${DEFAULT_BRANCH}"
   fi
-  
-  # Parse version
-  ver=${latest_tag#v}
-  IFS='.' read -r major minor patch <<< "$ver"
-  
-  # Set defaults if parsing failed
-  major=${major:-0}
-  minor=${minor:-0}
-  patch=${patch:-0}
-  
-  # Bump patch level
-  new_patch=$((patch + 1))
-  new_tag="v${major}.${minor}.${new_patch}"
-  
-  # Avoid duplicate tags
-  while git rev-parse --quiet --verify "refs/tags/${new_tag}" >/dev/null; do
-    new_patch=$((new_patch + 1))
+
+  # Tagging logic (only for existing repos with history)
+  if git rev-parse --verify HEAD~1 &>/dev/null; then
+    # Find latest semantic tag
+    latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname | tail -n1 || true)
+    
+    if [[ -z "$latest_tag" ]]; then
+      latest_tag="v0.0.0"
+      echo "📌 No version tags found; starting at ${latest_tag}"
+    fi
+    
+    # Parse version
+    ver=${latest_tag#v}
+    IFS='.' read -r major minor patch <<< "$ver"
+    
+    # Set defaults if parsing failed
+    major=${major:-0}
+    minor=${minor:-0}
+    patch=${patch:-0}
+    
+    # Bump patch level
+    new_patch=$((patch + 1))
     new_tag="v${major}.${minor}.${new_patch}"
+    
+    # Avoid duplicate tags
+    while git rev-parse --quiet --verify "refs/tags/${new_tag}" >/dev/null; do
+      new_patch=$((new_patch + 1))
+      new_tag="v${major}.${minor}.${new_patch}"
+    done
+    
+    echo "🏷️  Creating tag ${new_tag}..."
+    git tag -a "${new_tag}" -m "${description}"
+    
+    echo "📤 Pushing tag ${new_tag}..."
+    git push origin "${new_tag}"
+    
+    echo "✅ Complete! Tagged ${new_tag} with message '${description}'"
+  else
+    echo "✅ Complete! Repository pushed successfully."
+  fi
+
+  echo ""
+  echo "🔗 Repository URL: https://github.com/${OWNER}/${project_name}"
+}
+
+# Handle 'all' parameter
+if [[ "${PROJECT}" == "all" ]]; then
+  echo "🔄 Processing all Git repositories in ${BASE_DIR}..."
+  echo ""
+  
+  # Find all directories with .git subdirectory
+  for dir in "${BASE_DIR}"/*/; do
+    if [[ -d "${dir}/.git" ]]; then
+      repo_name=$(basename "${dir}")
+      echo "════════════════════════════════════════════════════════════"
+      echo "📍 Processing: ${dir}"
+      echo "════════════════════════════════════════════════════════════"
+      
+      # Call function for each repo
+      push_single_project "${repo_name}" "${DESC}" || {
+        echo "⚠️  Failed to process ${repo_name}, continuing with next..."
+      }
+      
+      echo ""
+    fi
   done
   
-  echo "🏷️  Creating tag ${new_tag}..."
-  git tag -a "${new_tag}" -m "${DESC}"
-  
-  echo "📤 Pushing tag ${new_tag}..."
-  git push origin "${new_tag}"
-  
-  echo "✅ Complete! Tagged ${new_tag} with message '${DESC}'"
-else
-  echo "✅ Complete! Repository pushed successfully."
+  echo "✅ All repositories processed!"
+  exit 0
 fi
 
-echo ""
-echo "🔗 Repository URL: https://github.com/${OWNER}/${PROJECT}"
+# Single project push
+push_single_project "${PROJECT}" "${DESC}"

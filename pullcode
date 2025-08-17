@@ -1,33 +1,72 @@
 #!/usr/bin/env bash
 set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
+# Usage: pullcode <GitHub-project-name|all>
+# Example: pullcode MyNewApp
+#          pullcode all
+
 # check for required project name
 if [ $# -ne 1 ]; then
-  echo "Usage: $0 <GitHub-project-name>"
+  echo "Usage: $0 <GitHub-project-name|all>"
+  echo "  Use 'all' to pull all git repositories in projects directory"
   echo "Example: $0 MyNewApp"
   exit 1
 fi
 
 PROJECT="$1"
 BASE_DIR="${HOME}/projects"
-TARGET_DIR="${BASE_DIR}/${PROJECT}"
-REPO_SSH="git@github.com:WebSurfinMurf/${PROJECT}.git"
 DEFAULT_BRANCH="main"
 
-echo "🔧 pullcode for '${PROJECT}' → ${TARGET_DIR}"
+# Function to pull a single project
+pull_single_project() {
+  local project_name="$1"
+  local target_dir="${BASE_DIR}/${project_name}"
+  local repo_ssh="git@github.com:WebSurfinMurf/${project_name}.git"
+  
+  echo "🔧 pullcode for '${project_name}' → ${target_dir}"
 
-if [ -d "${TARGET_DIR}/.git" ]; then
-  # existing repo: pull updates
-  echo "📂 Found existing repo; pulling latest on '${DEFAULT_BRANCH}'…"
-  cd "${TARGET_DIR}"
-  git fetch --depth=1 origin "${DEFAULT_BRANCH}"
-  git checkout "${DEFAULT_BRANCH}"
-  git reset --hard "origin/${DEFAULT_BRANCH}"
-  echo "✅ Updated ${PROJECT} to latest ${DEFAULT_BRANCH}."
-else
-  # new clone
-  echo "📂 Directory not found; cloning ${PROJECT} via SSH…"
-  mkdir -p "${TARGET_DIR}"
-  git clone --depth 1 --branch "${DEFAULT_BRANCH}" "${REPO_SSH}" "${TARGET_DIR}"
-  echo "✅ Cloned ${PROJECT} into ${TARGET_DIR}."
+  if [ -d "${target_dir}/.git" ]; then
+    # existing repo: pull updates
+    echo "📂 Found existing repo; pulling latest on '${DEFAULT_BRANCH}'…"
+    cd "${target_dir}"
+    git fetch --depth=1 origin "${DEFAULT_BRANCH}"
+    git checkout "${DEFAULT_BRANCH}"
+    git reset --hard "origin/${DEFAULT_BRANCH}"
+    echo "✅ Updated ${project_name} to latest ${DEFAULT_BRANCH}."
+  else
+    # new clone
+    echo "📂 Directory not found; cloning ${project_name} via SSH…"
+    mkdir -p "${target_dir}"
+    git clone --depth 1 --branch "${DEFAULT_BRANCH}" "${repo_ssh}" "${target_dir}"
+    echo "✅ Cloned ${project_name} into ${target_dir}."
+  fi
+}
+
+# Handle 'all' parameter
+if [[ "${PROJECT}" == "all" ]]; then
+  echo "🔄 Processing all Git repositories in ${BASE_DIR}..."
+  echo ""
+  
+  # Find all directories with .git subdirectory
+  for dir in "${BASE_DIR}"/*/; do
+    if [[ -d "${dir}/.git" ]]; then
+      repo_name=$(basename "${dir}")
+      echo "════════════════════════════════════════════════════════════"
+      echo "📍 Processing: ${dir}"
+      echo "════════════════════════════════════════════════════════════"
+      
+      # Call function for each repo
+      pull_single_project "${repo_name}" || {
+        echo "⚠️  Failed to process ${repo_name}, continuing with next..."
+      }
+      
+      echo ""
+    fi
+  done
+  
+  echo "✅ All repositories processed!"
+  exit 0
 fi
+
+# Single project pull
+pull_single_project "${PROJECT}"
