@@ -69,10 +69,35 @@ version_single_project() {
   
   cd "${target_dir}"
   
-  # Sync branch & tags with timeout
-  echo "⏬ Fetching tags (10 second timeout)..."
-  if ! timeout 10 git fetch origin --tags 2>&1; then
-    echo "⚠️  Fetch timed out or failed for ${project_name}. Skipping..."
+  # Sync branch & tags with retry logic
+  echo "⏬ Fetching tags..."
+  FETCH_SUCCESS=false
+  RETRY_COUNT=0
+  MAX_RETRIES=3
+  
+  while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ]; do
+    if [ $RETRY_COUNT -gt 0 ]; then
+      WAIT_TIME=$((RETRY_COUNT * 2))
+      echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+      sleep $WAIT_TIME
+    fi
+    
+    timeout 7 git fetch origin --tags 2>&1
+    FETCH_EXIT=$?
+    
+    if [ $FETCH_EXIT -eq 0 ]; then
+      FETCH_SUCCESS=true
+    elif [ $FETCH_EXIT -eq 124 ]; then
+      echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
+    else
+      echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
+    fi
+    
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+  done
+  
+  if [ "$FETCH_SUCCESS" = "false" ]; then
+    echo "⚠️  Could not fetch after $MAX_RETRIES attempts. Skipping..."
     return 1
   fi
   
@@ -88,10 +113,35 @@ version_single_project() {
     }
   fi
   
-  # Pull latest with timeout
-  echo "📥 Pulling latest (10 second timeout)..."
-  if ! timeout 10 git pull --ff-only origin "${DEFAULT_BRANCH}" 2>&1; then
-    echo "⚠️  Pull failed or timed out for ${project_name}. Continuing anyway..."
+  # Pull latest with retry logic
+  echo "📥 Pulling latest..."
+  PULL_SUCCESS=false
+  RETRY_COUNT=0
+  MAX_RETRIES=3
+  
+  while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$PULL_SUCCESS" = "false" ]; do
+    if [ $RETRY_COUNT -gt 0 ]; then
+      WAIT_TIME=$((RETRY_COUNT * 2))
+      echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+      sleep $WAIT_TIME
+    fi
+    
+    timeout 7 git pull --ff-only origin "${DEFAULT_BRANCH}" 2>&1
+    PULL_EXIT=$?
+    
+    if [ $PULL_EXIT -eq 0 ]; then
+      PULL_SUCCESS=true
+    elif [ $PULL_EXIT -eq 124 ]; then
+      echo "   ⏱️  Pull attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
+    else
+      echo "   ⚠️  Pull attempt $((RETRY_COUNT + 1)) failed (exit code: $PULL_EXIT)"
+    fi
+    
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+  done
+  
+  if [ "$PULL_SUCCESS" = "false" ]; then
+    echo "⚠️  Could not pull after $MAX_RETRIES attempts. Continuing anyway..."
   fi
   
   # Find latest semantic tag
@@ -187,6 +237,12 @@ if [[ "${PROJECT}" == "all" ]]; then
       }
       
       echo ""
+      
+      # Small delay between repos to avoid overwhelming GitHub
+      if [[ -d "${BASE_DIR}"/*/.git ]]; then
+        echo "   ⏸️  Pausing 2 seconds before next repository..."
+        sleep 2
+      fi
     fi
   done
   

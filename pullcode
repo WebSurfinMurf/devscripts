@@ -24,21 +24,87 @@ pull_single_project() {
   local repo_ssh="git@github.com:WebSurfinMurf/${project_name}.git"
   
   echo "🔧 pullcode for '${project_name}' → ${target_dir}"
+  
+  # Add safe.directory to avoid ownership issues
+  export GIT_CONFIG_COUNT=1
+  export GIT_CONFIG_KEY_0="safe.directory"
+  export GIT_CONFIG_VALUE_0="${target_dir}"
 
   if [ -d "${target_dir}/.git" ]; then
     # existing repo: pull updates
     echo "📂 Found existing repo; pulling latest on '${DEFAULT_BRANCH}'…"
     cd "${target_dir}"
-    git fetch --depth=1 origin "${DEFAULT_BRANCH}"
-    git checkout "${DEFAULT_BRANCH}"
-    git reset --hard "origin/${DEFAULT_BRANCH}"
-    echo "✅ Updated ${project_name} to latest ${DEFAULT_BRANCH}."
+    
+    # Fetch with retry logic
+    echo "⏬ Fetching latest changes..."
+    FETCH_SUCCESS=false
+    RETRY_COUNT=0
+    MAX_RETRIES=3
+    
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ]; do
+      if [ $RETRY_COUNT -gt 0 ]; then
+        WAIT_TIME=$((RETRY_COUNT * 2))
+        echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+        sleep $WAIT_TIME
+      fi
+      
+      timeout 7 git fetch --depth=1 origin "${DEFAULT_BRANCH}" 2>&1
+      FETCH_EXIT=$?
+      
+      if [ $FETCH_EXIT -eq 0 ]; then
+        FETCH_SUCCESS=true
+      elif [ $FETCH_EXIT -eq 124 ]; then
+        echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
+      else
+        echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
+      fi
+      
+      RETRY_COUNT=$((RETRY_COUNT + 1))
+    done
+    
+    if [ "$FETCH_SUCCESS" = "true" ]; then
+      git checkout "${DEFAULT_BRANCH}"
+      git reset --hard "origin/${DEFAULT_BRANCH}"
+      echo "✅ Updated ${project_name} to latest ${DEFAULT_BRANCH}."
+    else
+      echo "⚠️  Could not fetch after $MAX_RETRIES attempts. Skipping update."
+    fi
   else
-    # new clone
+    # new clone with retry logic
     echo "📂 Directory not found; cloning ${project_name} via SSH…"
     mkdir -p "${target_dir}"
-    git clone --depth 1 --branch "${DEFAULT_BRANCH}" "${repo_ssh}" "${target_dir}"
-    echo "✅ Cloned ${project_name} into ${target_dir}."
+    
+    CLONE_SUCCESS=false
+    RETRY_COUNT=0
+    MAX_RETRIES=3
+    
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$CLONE_SUCCESS" = "false" ]; do
+      if [ $RETRY_COUNT -gt 0 ]; then
+        WAIT_TIME=$((RETRY_COUNT * 2))
+        echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+        sleep $WAIT_TIME
+      fi
+      
+      timeout 15 git clone --depth 1 --branch "${DEFAULT_BRANCH}" "${repo_ssh}" "${target_dir}" 2>&1
+      CLONE_EXIT=$?
+      
+      if [ $CLONE_EXIT -eq 0 ]; then
+        CLONE_SUCCESS=true
+        echo "✅ Cloned ${project_name} into ${target_dir}."
+      elif [ $CLONE_EXIT -eq 124 ]; then
+        echo "   ⏱️  Clone attempt $((RETRY_COUNT + 1)) timed out after 15 seconds"
+        rm -rf "${target_dir}"
+      else
+        echo "   ⚠️  Clone attempt $((RETRY_COUNT + 1)) failed (exit code: $CLONE_EXIT)"
+        rm -rf "${target_dir}"
+      fi
+      
+      RETRY_COUNT=$((RETRY_COUNT + 1))
+    done
+    
+    if [ "$CLONE_SUCCESS" = "false" ]; then
+      echo "⚠️  Could not clone after $MAX_RETRIES attempts."
+    fi
   fi
 }
 
@@ -61,6 +127,12 @@ if [[ "${PROJECT}" == "all" ]]; then
       }
       
       echo ""
+      
+      # Small delay between repos to avoid overwhelming GitHub
+      if [[ -d "${BASE_DIR}"/*/.git ]]; then
+        echo "   ⏸️  Pausing 2 seconds before next repository..."
+        sleep 2
+      fi
     fi
   done
   
