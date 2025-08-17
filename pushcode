@@ -123,18 +123,17 @@ push_single_project() {
     
     # Fetch latest changes with timeout
     echo "⏬ Fetching latest changes (10 second timeout)..."
-    if ! timeout 10 git fetch origin --tags 2>&1; then
-      FETCH_EXIT=$?
-      if [ $FETCH_EXIT -eq 124 ]; then
-        echo "⚠️  Fetch timed out after 10 seconds. Possible causes:"
-        echo "    - Network connectivity issues"
-        echo "    - SSH key authentication hanging"
-        echo "    - Repository not accessible"
-        echo "    Continuing without fetch..."
-      else
-        echo "⚠️  Could not fetch (exit code: $FETCH_EXIT). Repository might not exist on GitHub yet."
-        echo "    Continuing without fetch..."
-      fi
+    timeout 10 git fetch origin --tags 2>&1
+    FETCH_EXIT=$?
+    if [ $FETCH_EXIT -eq 124 ]; then
+      echo "⚠️  Fetch timed out after 10 seconds. Possible causes:"
+      echo "    - Network connectivity issues"
+      echo "    - SSH key authentication hanging"
+      echo "    - Repository not accessible"
+      echo "    Continuing without fetch..."
+    elif [ $FETCH_EXIT -ne 0 ]; then
+      echo "⚠️  Could not fetch (exit code: $FETCH_EXIT). Repository might not exist on GitHub yet."
+      echo "    Continuing anyway..."
     fi
     
     # Get current branch
@@ -149,13 +148,12 @@ push_single_project() {
     # Try to pull if remote branch exists (with timeout for ls-remote)
     if timeout 5 git ls-remote --heads origin "${DEFAULT_BRANCH}" 2>/dev/null | grep -q "${DEFAULT_BRANCH}"; then
       echo "📥 Pulling latest from origin/${DEFAULT_BRANCH} (10 second timeout)..."
-      if ! timeout 10 git pull --ff-only origin "${DEFAULT_BRANCH}" 2>&1; then
-        PULL_EXIT=$?
-        if [ $PULL_EXIT -eq 124 ]; then
-          echo "⚠️  Pull timed out after 10 seconds. Continuing without pull..."
-        else
-          echo "⚠️  Cannot fast-forward (exit code: $PULL_EXIT). You may need to merge or rebase manually."
-        fi
+      timeout 10 git pull --ff-only origin "${DEFAULT_BRANCH}" 2>&1
+      PULL_EXIT=$?
+      if [ $PULL_EXIT -eq 124 ]; then
+        echo "⚠️  Pull timed out after 10 seconds. Continuing without pull..."
+      elif [ $PULL_EXIT -ne 0 ]; then
+        echo "⚠️  Cannot fast-forward (exit code: $PULL_EXIT). You may need to merge or rebase manually."
       fi
     fi
   fi
