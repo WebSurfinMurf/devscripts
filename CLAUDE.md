@@ -20,7 +20,6 @@ _This section is updated by Claude during each session_
   - When 'all' is passed, loops through all .git directories in ~/projects
   - Shows full path being processed
   - Continues even if one repo fails
-- Issue: pushcode may hang when running 'all' - needs investigation
 - Modified pushcode to detect and skip directories with .nogit marker file
 - Updated pushcode to NOT create/push tags when there are no changes to commit
 - Updated cleanup script
@@ -32,9 +31,23 @@ _This section is updated by Claude during each session_
   - Shows which images would be removed vs kept
   - Displays Docker system disk usage summary
   - Shows preview of what will be removed before cleanup
+- **FIXED**: pushcode hanging issues
+  - Added safe.directory environment variables to handle git ownership issues
+  - Added 10-second timeout on git fetch operations
+  - Added 5-second timeout on git ls-remote operations  
+  - Added 10-second timeout on git pull operations
+  - Added 1-second delays between commit push and tag operations
+  - Added debug info for MSFGet SSH connectivity
+  - Better error messages with exit codes and possible causes
+- Modified versioncode to support 'all' parameter
+  - Added function version_single_project() for reusability
+  - When 'all' is passed, versions all .git directories in ~/projects
+  - Includes same timeout and safe.directory fixes as pushcode
+  - Skips directories with .nogit marker
+  - Continues processing even if one repo fails
 
 ## Known Issues & TODOs
-- pushcode 'all' appears to hang - possibly waiting for git credentials or SSH key passphrase
+- ~~pushcode 'all' appears to hang~~ **FIXED with timeouts and safe.directory**
 
 ## Important Notes
 - Owner: WebSurfinMurf
@@ -60,6 +73,15 @@ _This section is updated by Claude during each session_
 # Pull all projects
 ./pullcode all
 
-# Version a project
+# Version a single project
 ./versioncode ProjectName "Version message"
+
+# Version all projects (patch bump)
+./versioncode all "Bulk version message"
+
+# Version all projects (stable bump)
+./versioncode all -stable "Stable release"
+
+# Version all projects (major bump)
+./versioncode all -major "Major release"
 ```
