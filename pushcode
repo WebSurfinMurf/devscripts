@@ -32,11 +32,11 @@ push_single_project() {
   
   echo "🔧 pushcode for '${project_name}' at ${target_dir}"
   
-  # Debug info for troubleshooting
-  if [[ "${project_name}" == "MSFGet" ]]; then
-    echo "   [DEBUG] Processing MSFGet - checking SSH connectivity..."
-    timeout 3 ssh -o BatchMode=yes -o ConnectTimeout=3 git@github.com 2>&1 | head -1 || echo "   [DEBUG] SSH test completed"
-  fi
+  # Debug info for troubleshooting - commented out as it can hang
+  # if [[ "${project_name}" == "MSFGet" ]]; then
+  #   echo "   [DEBUG] Processing MSFGet - checking SSH connectivity..."
+  #   # This debug check has been disabled as it can hang
+  # fi
 
   # Check if this is a new or existing project
   if [[ ! -d "${target_dir}" ]]; then
