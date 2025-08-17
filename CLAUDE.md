@@ -45,6 +45,13 @@ _This section is updated by Claude during each session_
   - Includes same timeout and safe.directory fixes as pushcode
   - Skips directories with .nogit marker
   - Continues processing even if one repo fails
+- **FINAL OPTIMIZATIONS**: Added retry logic to all scripts
+  - All scripts now have 3-attempt retry with exponential backoff (2s, 4s delays)
+  - Reduced timeouts from 20s to 7s (faster fail, multiple attempts)
+  - Added 2-second delay between repos in 'all' mode to avoid rate limiting
+  - pullcode: Added retry for both fetch and clone operations
+  - versioncode: Added retry for fetch and pull operations
+  - Consistent progress indicators: ↻ retry, ⏱️ timeout, ⏸️ pause
 
 ## Known Issues & TODOs
 - ~~pushcode 'all' appears to hang~~ **FIXED with timeouts and safe.directory**
