@@ -1,0 +1,51 @@
+# Environment and secrets
+*.env
+.env.*
+*.secret
+secrets/
+credentials/
+
+# Certificates and keys
+*.key
+*.pem
+*.crt
+*.cert
+*.p12
+*.pfx
+ssl/
+certs/
+certificates/
+
+# Development scripts - no specific ignores needed
+# But still include common patterns
+
+# Logs
+*.log
+logs/
+*.out
+*.err
+
+# Backups and temp files
+*.bak
+*.backup
+*.tmp
+*.temp
+*.old
+*.orig
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+.Trash-*
+
+# Editor files
+.vscode/
+.idea/
+*.sublime-*
+
+# Runtime and cache
+__pycache__/
+*.pyc
+.cache/
