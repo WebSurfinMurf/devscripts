@@ -154,6 +154,9 @@ push_single_project() {
     
     echo "🚀 Pushing commits to origin/${DEFAULT_BRANCH}..."
     git push origin "${DEFAULT_BRANCH}"
+    
+    # Small delay after pushing commits before tagging
+    sleep 1
   fi
 
   # Tagging logic (only for existing repos with history AND when we pushed changes)
@@ -187,6 +190,9 @@ push_single_project() {
     
     echo "🏷️  Creating tag ${new_tag}..."
     git tag -a "${new_tag}" -m "${description}"
+    
+    # Small delay to ensure tag is fully created before pushing
+    sleep 1
     
     echo "📤 Pushing tag ${new_tag}..."
     git push origin "${new_tag}"
