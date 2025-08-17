@@ -142,13 +142,13 @@ push_single_project() {
           sleep $WAIT_TIME
         fi
         
-        timeout 20 git fetch origin --tags 2>&1
+        timeout 7 git fetch origin --tags 2>&1
         FETCH_EXIT=$?
         
         if [ $FETCH_EXIT -eq 0 ]; then
           FETCH_SUCCESS=true
         elif [ $FETCH_EXIT -eq 124 ]; then
-          echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 20 seconds"
+          echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
         else
           echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
         fi
@@ -178,10 +178,10 @@ push_single_project() {
     if [[ "$SKIP_FETCH" != "true" ]]; then
       if timeout 10 git ls-remote --heads origin "${DEFAULT_BRANCH}" 2>/dev/null | grep -q "${DEFAULT_BRANCH}"; then
         echo "📥 Pulling latest from origin/${DEFAULT_BRANCH}..."
-        timeout 20 git pull --ff-only origin "${DEFAULT_BRANCH}" 2>&1
+        timeout 7 git pull --ff-only origin "${DEFAULT_BRANCH}" 2>&1
         PULL_EXIT=$?
         if [ $PULL_EXIT -eq 124 ]; then
-          echo "⚠️  Pull timed out after 20 seconds. Continuing without pull..."
+          echo "⚠️  Pull timed out after 7 seconds. Continuing without pull..."
         elif [ $PULL_EXIT -ne 0 ]; then
           echo "⚠️  Cannot fast-forward (exit code: $PULL_EXIT). You may need to merge or rebase manually."
         fi
