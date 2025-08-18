@@ -90,37 +90,68 @@ push_single_project() {
       git remote set-url origin "${github_url}"
     }
     
-    # Create repo on GitHub using gh CLI if available
-    if command -v gh &> /dev/null; then
-      echo "📤 Creating repository on GitHub..."
-      gh repo create "${OWNER}/${project_name}" --private --source=. --push || {
-        echo "   Repository might already exist, trying to push..."
-        git push -u origin "${DEFAULT_BRANCH}" || {
-          echo "⚠️  Could not push. You may need to create the repo on GitHub first:"
-          echo "   https://github.com/new"
-          echo "   Name: ${project_name}"
-          echo "   Then run this script again."
-          return 1
-        }
-      }
-    else
-      echo "⚠️  GitHub CLI not found. Attempting to push..."
-      echo "   If this fails, create the repo manually at: https://github.com/new"
-      git push -u origin "${DEFAULT_BRANCH}" 2>/dev/null || {
-        echo ""
-        echo "📝 To create the repository:"
-        echo "   1. Go to: https://github.com/new"
-        echo "   2. Repository name: ${project_name}"
-        echo "   3. Set as Private or Public"
-        echo "   4. DO NOT initialize with README"
-        echo "   5. Click 'Create repository'"
-        echo "   6. Run this script again"
-        return 1
-      }
-    fi
+    # Try to push first to see if repo exists
+    echo "🔍 Checking if repository exists on GitHub..."
+    git push -u origin "${DEFAULT_BRANCH}" 2>/dev/null && {
+      echo "✅ Repository exists and push successful!"
+    } || {
+      # Repository doesn't exist, provide clear instructions
+      echo ""
+      echo "════════════════════════════════════════════════════════════════"
+      echo "⚠️  REPOSITORY DOES NOT EXIST ON GITHUB"
+      echo "════════════════════════════════════════════════════════════════"
+      echo ""
+      echo "📝 Please create the repository first:"
+      echo ""
+      echo "   1. Open your browser and go to:"
+      echo "      👉 https://github.com/new"
+      echo ""
+      echo "   2. Fill in:"
+      echo "      • Repository name: ${project_name}"
+      echo "      • Description: (optional)"
+      echo "      • Set as 🔒 Private or 🌍 Public"
+      echo ""
+      echo "   3. IMPORTANT:"
+      echo "      ⚠️  DO NOT check 'Add a README file'"
+      echo "      ⚠️  DO NOT add .gitignore"
+      echo "      ⚠️  DO NOT choose a license"
+      echo ""
+      echo "   4. Click the green 'Create repository' button"
+      echo ""
+      echo "   5. After creating, run this command again:"
+      echo "      pushcode ${project_name} \"${description}\""
+      echo ""
+      echo "════════════════════════════════════════════════════════════════"
+      echo ""
+      echo "💡 Tip: This is only needed once per new project."
+      echo "   After creation, pushcode will work normally."
+      echo ""
+      return 1
+    }
   else
     # Existing repository
     description="${description:-Update}"
+    
+    # Check for git ownership issues
+    git status 2>&1 | grep -q "dubious ownership" && {
+      echo ""
+      echo "════════════════════════════════════════════════════════════════"
+      echo "⚠️  GIT OWNERSHIP ISSUE DETECTED"
+      echo "════════════════════════════════════════════════════════════════"
+      echo ""
+      echo "Git detected ownership issues with this repository."
+      echo "This happens when the repository was created by a different user."
+      echo ""
+      echo "📝 To fix this, run the following command:"
+      echo ""
+      echo "   git config --global --add safe.directory ${PROJECT_DIR}/${project_name}"
+      echo ""
+      echo "Then run pushcode again:"
+      echo "   pushcode ${project_name} \"${description}\""
+      echo ""
+      echo "════════════════════════════════════════════════════════════════"
+      return 1
+    }
     
     # Check if remote exists
     if ! git remote | grep -q origin; then
@@ -196,6 +227,15 @@ push_single_project() {
   # Commit if there are changes
   if git diff --cached --quiet; then
     echo "⚠️  No changes to commit."
+    
+    # Check if there are unpushed commits
+    if git rev-list --count origin/${DEFAULT_BRANCH}..HEAD 2>/dev/null | grep -q '^[1-9]' || \
+       ! git rev-parse --verify origin/${DEFAULT_BRANCH} &>/dev/null; then
+      echo "📤 Found unpushed commits. Pushing to GitHub..."
+      git push -u origin "${DEFAULT_BRANCH}"
+      return 0
+    fi
+    
     # Skip tagging if no changes
     return 0
   else
