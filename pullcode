@@ -24,7 +24,13 @@ pull_single_project() {
   local repo_ssh="git@github.com:WebSurfinMurf/${project_name}.git"
   
   echo "🔧 pullcode for '${project_name}' → ${target_dir}"
-  
+
+  # Respect .nogit for single-project runs too
+  if [[ -f "${target_dir}/.nogit" ]]; then
+    echo "⛔ '${project_name}' is marked .nogit; skipping git pull."
+    return 0
+  fi
+
   # Add safe.directory to avoid ownership issues
   export GIT_CONFIG_COUNT=1
   export GIT_CONFIG_KEY_0="safe.directory"
