@@ -31,7 +31,13 @@ push_single_project() {
   local github_url="git@github.com:${OWNER}/${project_name}.git"
   
   echo "🔧 pushcode for '${project_name}' at ${target_dir}"
-  
+
+  # Respect .nogit for single-project runs too
+  if [[ -f "${target_dir}/.nogit" ]]; then
+    echo "⛔ '${project_name}' is marked .nogit; skipping git init/push."
+    return 0
+  fi
+
   # Debug info for troubleshooting - commented out as it can hang
   # if [[ "${project_name}" == "MSFGet" ]]; then
   #   echo "   [DEBUG] Processing MSFGet - checking SSH connectivity..."
