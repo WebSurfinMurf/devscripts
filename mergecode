@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+set -euo pipefail   # Strict mode
+
+# Usage: mergecode <GitHub-project-name> 
+# Example: mergecode MyApp
+#
+# Creates a review branch for merging origin/main into current work
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 <GitHub-project-name>"
+  echo "  Creates a review branch for merging origin/main"
+  echo "  Note: 'all' is not allowed for merge operations"
+  exit 1
+fi
+
+# Required project name
+PROJECT="$1"
+
+# Check for 'all' parameter
+if [[ "${PROJECT}" == "all" ]]; then
+  echo "❌ Error: 'all' is not allowed for merge operations"
+  echo "   Merges should be reviewed one project at a time"
+  exit 1
+fi
+
+# Variables
+OWNER="WebSurfinMurf"
+BASE_DIR="${HOME}/projects"
+DEFAULT_BRANCH="main"
+REVIEW_BRANCH="review/merge-origin-main"
+
+# Function to create merge review branch
+create_merge_review() {
+  local project_name="$1"
+  local target_dir="${BASE_DIR}/${project_name}"
+  
+  echo "🔧 mergecode for '${project_name}' at ${target_dir}"
+  echo ""
+
+  # Check if project directory exists
+  if [[ ! -d "${target_dir}" ]]; then
+    echo "❌ Error: Project directory '${target_dir}' does not exist."
+    return 1
+  fi
+
+  cd "${target_dir}"
+  
+  # Add safe.directory to avoid ownership issues
+  export GIT_CONFIG_COUNT=1
+  export GIT_CONFIG_KEY_0="safe.directory"
+  export GIT_CONFIG_VALUE_0="${target_dir}"
+  
+  # Check if it's a git repo
+  if [[ ! -d ".git" ]]; then
+    echo "❌ Error: Not a git repository"
+    echo "   Please initialize git first with 'pushcode ${project_name}'"
+    return 1
+  fi
+
+  # Check for git ownership issues
+  git status 2>&1 | grep -q "dubious ownership" && {
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "⚠️  GIT OWNERSHIP ISSUE DETECTED"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "Git detected ownership issues with this repository."
+    echo "This happens when the repository was created by a different user."
+    echo ""
+    echo "📝 To fix this, run the following command:"
+    echo ""
+    echo "   git config --global --add safe.directory ${target_dir}"
+    echo ""
+    echo "Then run mergecode again:"
+    echo "   mergecode ${project_name}"
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    return 1
+  }
+
+  # Fetch latest from origin with timeout and retry logic
+  echo "⏬ Fetching latest changes from origin..."
+  FETCH_SUCCESS=false
+  RETRY_COUNT=0
+  MAX_RETRIES=3
+  
+  while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ]; do
+    if [ $RETRY_COUNT -gt 0 ]; then
+      WAIT_TIME=$((RETRY_COUNT * 2))
+      echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+      sleep $WAIT_TIME
+    fi
+    
+    timeout 7 git fetch origin 2>&1
+    FETCH_EXIT=$?
+    
+    if [ $FETCH_EXIT -eq 0 ]; then
+      FETCH_SUCCESS=true
+    elif [ $FETCH_EXIT -eq 124 ]; then
+      echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
+    else
+      echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
+    fi
+    
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+  done
+  
+  if [ "$FETCH_SUCCESS" = "false" ]; then
+    echo "❌ Fetch failed after $MAX_RETRIES attempts. Cannot proceed with merge."
+    echo "   Possible causes:"
+    echo "    - Network connectivity issues"
+    echo "    - SSH key authentication hanging"
+    echo "    - Repository not accessible"
+    return 1
+  fi
+
+  # Check if origin/main exists
+  if ! git rev-parse --verify origin/${DEFAULT_BRANCH} &>/dev/null; then
+    echo "❌ Error: origin/${DEFAULT_BRANCH} does not exist"
+    echo "   The remote repository may not have a main branch yet"
+    return 1
+  fi
+
+  # Delete old review branch if it exists (local and remote)
+  if git show-ref --verify --quiet refs/heads/${REVIEW_BRANCH}; then
+    echo "🗑️  Removing old local review branch..."
+    git branch -D ${REVIEW_BRANCH}
+  fi
+  
+  if git ls-remote --heads origin ${REVIEW_BRANCH} | grep -q ${REVIEW_BRANCH}; then
+    echo "🗑️  Removing old remote review branch..."
+    git push origin --delete ${REVIEW_BRANCH} 2>/dev/null || true
+  fi
+
+  # Create new review branch
+  echo "🌿 Creating review branch: ${REVIEW_BRANCH}"
+  git checkout -b ${REVIEW_BRANCH}
+
+  # Perform the merge
+  echo "🔀 Merging origin/${DEFAULT_BRANCH} into ${REVIEW_BRANCH}..."
+  echo ""
+  
+  if git merge --no-ff origin/${DEFAULT_BRANCH}; then
+    echo ""
+    echo "✅ Merge completed successfully!"
+  else
+    echo ""
+    echo "⚠️  Merge conflicts detected!"
+    echo ""
+    echo "📝 Please resolve conflicts manually:"
+    echo "   1. Edit conflicted files (marked with <<<<<<<)"
+    echo "   2. Stage resolved files: git add <file>"
+    echo "   3. Complete merge: git commit"
+    echo "   4. Push branch: git push -u origin ${REVIEW_BRANCH}"
+    echo ""
+    echo "Then follow the instructions below to create a PR."
+    return 1
+  fi
+
+  # Push the review branch
+  echo "📤 Pushing review branch to GitHub..."
+  git push -u origin ${REVIEW_BRANCH}
+
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo "✅ MERGE REVIEW BRANCH CREATED SUCCESSFULLY"
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+  echo "📋 Open a Pull Request on GitHub:"
+  echo ""
+  echo "   1. Go to your repo:"
+  echo "      👉 https://github.com/${OWNER}/${project_name}"
+  echo ""
+  echo "   2. Click 'Compare & pull request' button (or 'New pull request')"
+  echo ""
+  echo "   3. Set branches:"
+  echo "      • base: ${DEFAULT_BRANCH} ← compare: ${REVIEW_BRANCH}"
+  echo ""
+  echo "   4. Review under the 'Files changed' tab"
+  echo "      You'll see exactly what the merge will introduce"
+  echo ""
+  echo "   5. When satisfied, click 'Merge pull request'"
+  echo "      That keeps a clean review trail"
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+  echo "💡 After merging the PR, you can:"
+  echo "   • Switch back to main: git checkout ${DEFAULT_BRANCH}"
+  echo "   • Pull latest: git pull origin ${DEFAULT_BRANCH}"
+  echo "   • Delete local review branch: git branch -d ${REVIEW_BRANCH}"
+  echo ""
+}
+
+# Execute merge review
+create_merge_review "${PROJECT}"
