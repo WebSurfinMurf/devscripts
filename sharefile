@@ -2,6 +2,7 @@
 # copy_to_shared.sh
 #
 # Usage: ./copy_to_shared.sh /path/to/source_file
+# //SHAREDSMA/Flash512 either linux or laptop
 
 # 1) Check for exactly one argument
 if [ "$#" -ne 1 ]; then
@@ -10,7 +11,7 @@ if [ "$#" -ne 1 ]; then
 fi
 
 src="$1"
-dest_dir="/mnt/shared/shared"
+dest_dir="/mnt/shared"
 
 # 2) Verify source exists
 if [ ! -e "$src" ]; then
