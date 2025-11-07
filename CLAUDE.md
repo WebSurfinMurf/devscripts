@@ -74,7 +74,7 @@ _This section is updated by Claude during each session_
 # Push all projects
 ./pushcode all "Bulk update message"
 
-# Pull single project  
+# Pull single project
 ./pullcode ProjectName
 
 # Pull all projects
@@ -91,6 +91,10 @@ _This section is updated by Claude during each session_
 
 # Version all projects (major bump)
 ./versioncode all -major "Major release"
+
+# Claude Code configuration backup
+./claude-push "Optional commit message"  # Backup current config to GitLab
+./claude-pull                             # Restore config from GitLab
 ```
 
 ### Session: 2025-08-17 (Session 3)

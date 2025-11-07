@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: claude-pull
+# Pulls latest Claude Code configuration from GitLab and restores to local directories
+
+PROJECT="claude-code-config"
+BASE_DIR="${HOME}/projects"
+REPO_DIR="${BASE_DIR}/${PROJECT}"
+GITLAB_URL="ssh://git@gitlab.ai-servicers.com:2222/administrators/${PROJECT}.git"
+
+echo "🔧 claude-pull: Syncing Claude Code configuration from GitLab"
+echo ""
+
+# Add safe.directory to avoid ownership issues
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0="safe.directory"
+export GIT_CONFIG_VALUE_0="${REPO_DIR}"
+
+# Pull latest from GitLab using pullcode
+if [[ -d "${REPO_DIR}/.git" ]]; then
+  echo "📥 Pulling latest from GitLab..."
+  cd "${REPO_DIR}"
+
+  # Fetch with retry logic
+  FETCH_SUCCESS=false
+  RETRY_COUNT=0
+  MAX_RETRIES=3
+
+  while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ]; do
+    if [ $RETRY_COUNT -gt 0 ]; then
+      WAIT_TIME=$((RETRY_COUNT * 2))
+      echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+      sleep $WAIT_TIME
+    fi
+
+    timeout 7 git fetch --depth=1 origin main 2>&1
+    FETCH_EXIT=$?
+
+    if [ $FETCH_EXIT -eq 0 ]; then
+      FETCH_SUCCESS=true
+    elif [ $FETCH_EXIT -eq 124 ]; then
+      echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
+    else
+      echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
+    fi
+
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+  done
+
+  if [ "$FETCH_SUCCESS" = "true" ]; then
+    git checkout main
+    git reset --hard origin/main
+    echo "✅ Updated ${PROJECT} to latest main."
+  else
+    echo "⚠️  Could not fetch after $MAX_RETRIES attempts. Continuing with existing files..."
+  fi
+else
+  echo "📂 Repository not found, cloning from GitLab..."
+  timeout 15 git clone --depth 1 --branch main "${GITLAB_URL}" "${REPO_DIR}" 2>&1 || {
+    echo "❌ Failed to clone repository"
+    exit 1
+  }
+  echo "✅ Cloned ${PROJECT}"
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "📋 Restoring Configuration Files"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# Restore infrastructure config (workspace-level)
+if [[ -d "${REPO_DIR}/infrastructure" ]]; then
+  echo "🔧 Restoring infrastructure config to ${HOME}/projects/.claude/..."
+  mkdir -p "${HOME}/projects/.claude"
+  rsync -av --delete \
+    --exclude="shell-snapshots/" \
+    --exclude=".credentials.json" \
+    "${REPO_DIR}/infrastructure/" "${HOME}/projects/.claude/"
+  echo "✅ Infrastructure config restored"
+else
+  echo "⚠️  No infrastructure directory found in backup"
+fi
+
+echo ""
+
+# Restore user config (home-level) - with caution
+if [[ -d "${REPO_DIR}/home" ]]; then
+  echo "🏠 Restoring user config to ${HOME}/.claude/..."
+  echo "   ⚠️  This will overwrite your current settings and history"
+
+  # Backup current .credentials.json if exists
+  if [[ -f "${HOME}/.claude/.credentials.json" ]]; then
+    echo "   🔐 Preserving existing .credentials.json"
+    cp "${HOME}/.claude/.credentials.json" "/tmp/.credentials.json.backup"
+  fi
+
+  mkdir -p "${HOME}/.claude"
+  rsync -av --delete \
+    --exclude="shell-snapshots/" \
+    --exclude=".credentials.json" \
+    --exclude="file-history/" \
+    --exclude="debug/" \
+    "${REPO_DIR}/home/" "${HOME}/.claude/"
+
+  # Restore credentials if backed up
+  if [[ -f "/tmp/.credentials.json.backup" ]]; then
+    mv "/tmp/.credentials.json.backup" "${HOME}/.claude/.credentials.json"
+    echo "   🔐 Restored original .credentials.json"
+  fi
+
+  echo "✅ User config restored"
+else
+  echo "⚠️  No home directory found in backup"
+fi
+
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "✅ Claude Code configuration sync complete!"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+echo "📂 Restored from: ${REPO_DIR}"
+echo "🔧 Infrastructure: ${HOME}/projects/.claude/"
+echo "🏠 User config:    ${HOME}/.claude/"
+echo ""

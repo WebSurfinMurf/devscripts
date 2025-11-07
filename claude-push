@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Usage: claude-push [commit-message]
+# Syncs Claude Code configuration to GitLab backup repository
+
+PROJECT="claude-code-config"
+BASE_DIR="${HOME}/projects"
+REPO_DIR="${BASE_DIR}/${PROJECT}"
+GITLAB_URL="ssh://git@gitlab.ai-servicers.com:2222/administrators/${PROJECT}.git"
+COMMIT_MSG="${1:-Update Claude Code configuration}"
+
+echo "🔧 claude-push: Backing up Claude Code configuration to GitLab"
+echo ""
+
+# Check if repo exists
+if [[ ! -d "${REPO_DIR}/.git" ]]; then
+  echo "❌ Error: ${REPO_DIR} is not a git repository"
+  echo "   Run 'claude-pull' first to initialize the backup repository"
+  exit 1
+fi
+
+cd "${REPO_DIR}"
+
+# Add safe.directory to avoid ownership issues
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0="safe.directory"
+export GIT_CONFIG_VALUE_0="${REPO_DIR}"
+
+echo "═══════════════════════════════════════════════════════════════"
+echo "📋 Syncing Configuration Files"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# Sync infrastructure config (workspace-level)
+if [[ -d "${HOME}/projects/.claude" ]]; then
+  echo "🔧 Syncing infrastructure config from ${HOME}/projects/.claude/..."
+  mkdir -p "${REPO_DIR}/infrastructure"
+  rsync -av --delete \
+    --exclude="shell-snapshots/" \
+    --exclude=".credentials.json" \
+    "${HOME}/projects/.claude/" "${REPO_DIR}/infrastructure/"
+  echo "✅ Infrastructure config synced"
+else
+  echo "⚠️  No infrastructure config found at ${HOME}/projects/.claude/"
+fi
+
+echo ""
+
+# Sync user config (home-level)
+if [[ -d "${HOME}/.claude" ]]; then
+  echo "🏠 Syncing user config from ${HOME}/.claude/..."
+  mkdir -p "${REPO_DIR}/home"
+  rsync -av --delete \
+    --exclude="shell-snapshots/" \
+    --exclude=".credentials.json" \
+    --exclude="file-history/" \
+    --exclude="debug/" \
+    "${HOME}/.claude/" "${REPO_DIR}/home/"
+  echo "✅ User config synced"
+else
+  echo "⚠️  No user config found at ${HOME}/.claude/"
+fi
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════"
+echo "📤 Committing and Pushing to GitLab"
+echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+# Check if remote exists
+if ! git remote | grep -q origin; then
+  echo "🔗 Adding GitLab remote..."
+  git remote add origin "${GITLAB_URL}"
+fi
+
+# Fetch latest changes with timeout and retry logic
+echo "⏬ Fetching latest changes..."
+FETCH_SUCCESS=false
+RETRY_COUNT=0
+MAX_RETRIES=3
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ]; do
+  if [ $RETRY_COUNT -gt 0 ]; then
+    WAIT_TIME=$((RETRY_COUNT * 2))
+    echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+    sleep $WAIT_TIME
+  fi
+
+  timeout 7 git fetch origin --tags 2>&1
+  FETCH_EXIT=$?
+
+  if [ $FETCH_EXIT -eq 0 ]; then
+    FETCH_SUCCESS=true
+  elif [ $FETCH_EXIT -eq 124 ]; then
+    echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
+  else
+    echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
+  fi
+
+  RETRY_COUNT=$((RETRY_COUNT + 1))
+done
+
+if [ "$FETCH_SUCCESS" = "false" ]; then
+  echo "⚠️  Fetch failed after $MAX_RETRIES attempts. Continuing without fetch..."
+fi
+
+# Get current branch
+current_branch=$(git branch --show-current)
+
+# If not on main, switch to it
+if [[ "$current_branch" != "main" ]]; then
+  echo "🔄 Switching to main branch..."
+  git checkout -b main 2>/dev/null || git checkout main
+fi
+
+# Try to pull if remote branch exists
+if [[ "$FETCH_SUCCESS" = "true" ]]; then
+  if timeout 10 git ls-remote --heads origin main 2>/dev/null | grep -q "main"; then
+    echo "📥 Pulling latest from origin/main..."
+    timeout 7 git pull --ff-only origin main 2>&1 || {
+      echo "⚠️  Could not fast-forward. Continuing with local changes..."
+    }
+  fi
+fi
+
+# Stage all changes
+echo "📝 Staging all changes..."
+git add --all
+
+# Commit if there are changes
+if git diff --cached --quiet; then
+  echo "⚠️  No changes to commit."
+
+  # Check if there are unpushed commits
+  if git rev-list --count origin/main..HEAD 2>/dev/null | grep -q '^[1-9]' || \
+     ! git rev-parse --verify origin/main &>/dev/null; then
+    echo "📤 Found unpushed commits. Pushing to GitLab..."
+    git push -u origin main
+    echo "✅ Pushed existing commits to GitLab"
+  else
+    echo "✅ Everything is up to date"
+  fi
+else
+  echo "💬 Committing with message: '${COMMIT_MSG}'"
+  git commit -m "${COMMIT_MSG}"
+
+  echo "🚀 Pushing commits to origin/main..."
+  git push origin main
+
+  echo "✅ Complete! Configuration backed up to GitLab"
+fi
+
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "✅ Claude Code configuration backup complete!"
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+echo "📂 Backed up to: ssh://git@gitlab.ai-servicers.com:2222/administrators/${PROJECT}.git"
+echo "🔧 Infrastructure: ${HOME}/projects/.claude/ → infrastructure/"
+echo "🏠 User config:    ${HOME}/.claude/ → home/"
+echo ""
+echo "🔗 Repository URL: https://gitlab.ai-servicers.com/administrators/${PROJECT}"
+echo ""
