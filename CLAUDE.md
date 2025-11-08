@@ -53,6 +53,17 @@ _This section is updated by Claude during each session_
   - versioncode: Added retry for fetch and pull operations
   - Consistent progress indicators: ↻ retry, ⏱️ timeout, ⏸️ pause
 
+### Session: 2025-11-08
+- **Added "." parameter support** to pushcode, pullcode, versioncode
+  - Use "." as first parameter to operate on current directory
+  - Automatically detects project name from basename of pwd
+  - Example: `cd ~/projects/nginx && pushcode . "Quick fix"`
+- **Added .claude directory detection**
+  - When pushcode/pullcode run from ~/.claude or ~/projects/.claude
+  - Automatically redirects to claude-push/claude-pull scripts
+  - Ensures proper GitLab backup workflow for Claude Code config
+  - No manual switching needed between GitHub and GitLab workflows
+
 ## Known Issues & TODOs
 - ~~pushcode 'all' appears to hang~~ **FIXED with timeouts and safe.directory**
 
@@ -71,11 +82,19 @@ _This section is updated by Claude during each session_
 # Push single project
 ./pushcode ProjectName "Commit message"
 
+# Push current directory (NEW)
+cd ~/projects/myproject
+./pushcode . "Quick fix"
+
 # Push all projects
 ./pushcode all "Bulk update message"
 
 # Pull single project
 ./pullcode ProjectName
+
+# Pull current directory (NEW)
+cd ~/projects/myproject
+./pullcode .
 
 # Pull all projects
 ./pullcode all

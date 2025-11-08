@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
-# Usage: versioncode <GitHub-project-name|all> [-major|-stable] [release-description]
+# Usage: versioncode <GitHub-project-name|all|.> [-major|-stable] [release-description]
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <GitHub-project-name|all> [-major|-stable] [release-description]"
+  echo "Usage: $0 <GitHub-project-name|all|.> [-major|-stable] [release-description]"
   echo "  Use 'all' to version all git repositories in projects directory"
+  echo "  Use '.' to version current directory"
   exit 1
 fi
 
 # Required project name
 PROJECT="$1"
 shift
+
+# Handle current directory mode
+if [[ "${PROJECT}" == "." ]]; then
+  # Use current directory
+  CURRENT_DIR="$(pwd)"
+  PROJECT="$(basename "${CURRENT_DIR}")"
+  USE_CURRENT_DIR=true
+  echo "🔧 Using current directory: ${CURRENT_DIR}"
+  echo "🔧 Detected project name: ${PROJECT}"
+else
+  USE_CURRENT_DIR=false
+fi
 
 # Default settings
 MODE="patch"               # 'patch' (default), 'stable', or 'major'
@@ -44,7 +57,7 @@ version_single_project() {
   local project_name="$1"
   local mode="$2"
   local description="$3"
-  local target_dir="${BASE_DIR}/${project_name}"
+  local target_dir="${4:-${BASE_DIR}/${project_name}}"  # Optional 4th param for custom dir
   local repo_ssh=""
   local remote_type="github"
 
@@ -275,4 +288,8 @@ if [[ "${PROJECT}" == "all" ]]; then
 fi
 
 # Single project version
-version_single_project "${PROJECT}" "${MODE}" "${DESC}"
+if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
+  version_single_project "${PROJECT}" "${MODE}" "${DESC}" "${CURRENT_DIR}"
+else
+  version_single_project "${PROJECT}" "${MODE}" "${DESC}"
+fi

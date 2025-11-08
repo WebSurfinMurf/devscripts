@@ -1,19 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail   # Strict mode
 
-# Usage: pushcode <GitHub-project-name|all> [release-description]
+# Usage: pushcode <GitHub-project-name|all|.> [release-description]
 # Example: pushcode MyApp "Fixed bug in auth"
 #          pushcode all "Weekly updates"
+#          pushcode . "Quick fix" (uses current directory)
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <GitHub-project-name|all> [release-description]"
+  echo "Usage: $0 <GitHub-project-name|all|.> [release-description]"
   echo "  Use 'all' to push all git repositories in projects directory"
+  echo "  Use '.' to push current directory"
   exit 1
 fi
 
 # Required project name
 PROJECT="$1"
 shift
+
+# Handle current directory mode
+if [[ "${PROJECT}" == "." ]]; then
+  # Use current directory
+  CURRENT_DIR="$(pwd)"
+  PROJECT="$(basename "${CURRENT_DIR}")"
+  USE_CURRENT_DIR=true
+
+  # Special handling for .claude directories - redirect to claude-push
+  if [[ "${CURRENT_DIR}" == "${HOME}/.claude" ]] || [[ "${CURRENT_DIR}" == "${HOME}/projects/.claude" ]]; then
+    echo "🔧 Detected .claude directory - using claude-push instead"
+    echo ""
+    exec claude-push "$@"
+  fi
+
+  echo "🔧 Using current directory: ${CURRENT_DIR}"
+  echo "🔧 Detected project name: ${PROJECT}"
+else
+  USE_CURRENT_DIR=false
+fi
 
 # Release description defaults to 'Initial commit' for new repos, 'Update' for existing
 DESC="${1:-}"
@@ -27,7 +49,7 @@ DEFAULT_BRANCH="main"
 push_single_project() {
   local project_name="$1"
   local description="$2"
-  local target_dir="${BASE_DIR}/${project_name}"
+  local target_dir="${3:-${BASE_DIR}/${project_name}}"  # Optional 3rd param for custom dir
   local github_url=""
   local remote_type="github"
 
@@ -360,4 +382,8 @@ if [[ "${PROJECT}" == "all" ]]; then
 fi
 
 # Single project push
-push_single_project "${PROJECT}" "${DESC}"
+if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
+  push_single_project "${PROJECT}" "${DESC}" "${CURRENT_DIR}"
+else
+  push_single_project "${PROJECT}" "${DESC}"
+fi

@@ -1,26 +1,48 @@
 #!/usr/bin/env bash
 set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
-# Usage: pullcode <GitHub-project-name|all>
+# Usage: pullcode <GitHub-project-name|all|.>
 # Example: pullcode MyNewApp
 #          pullcode all
+#          pullcode . (uses current directory)
 
 # check for required project name
 if [ $# -ne 1 ]; then
-  echo "Usage: $0 <GitHub-project-name|all>"
+  echo "Usage: $0 <GitHub-project-name|all|.>"
   echo "  Use 'all' to pull all git repositories in projects directory"
+  echo "  Use '.' to pull current directory"
   echo "Example: $0 MyNewApp"
   exit 1
 fi
 
 PROJECT="$1"
+
+# Handle current directory mode
+if [[ "${PROJECT}" == "." ]]; then
+  # Use current directory
+  CURRENT_DIR="$(pwd)"
+  PROJECT="$(basename "${CURRENT_DIR}")"
+  USE_CURRENT_DIR=true
+
+  # Special handling for .claude directories - redirect to claude-pull
+  if [[ "${CURRENT_DIR}" == "${HOME}/.claude" ]] || [[ "${CURRENT_DIR}" == "${HOME}/projects/.claude" ]]; then
+    echo "🔧 Detected .claude directory - using claude-pull instead"
+    echo ""
+    exec claude-pull
+  fi
+
+  echo "🔧 Using current directory: ${CURRENT_DIR}"
+  echo "🔧 Detected project name: ${PROJECT}"
+else
+  USE_CURRENT_DIR=false
+fi
 BASE_DIR="${HOME}/projects"
 DEFAULT_BRANCH="main"
 
 # Function to pull a single project
 pull_single_project() {
   local project_name="$1"
-  local target_dir="${BASE_DIR}/${project_name}"
+  local target_dir="${2:-${BASE_DIR}/${project_name}}"  # Optional 2nd param for custom dir
   local repo_ssh=""
   local remote_type="github"
 
@@ -165,4 +187,8 @@ if [[ "${PROJECT}" == "all" ]]; then
 fi
 
 # Single project pull
-pull_single_project "${PROJECT}"
+if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
+  pull_single_project "${PROJECT}" "${CURRENT_DIR}"
+else
+  pull_single_project "${PROJECT}"
+fi
