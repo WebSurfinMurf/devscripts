@@ -80,7 +80,7 @@ pull_single_project() {
     # existing repo: pull updates
     echo "📂 Found existing repo; pulling latest on '${DEFAULT_BRANCH}'…"
     cd "${target_dir}"
-    
+
     # Fetch with retry logic
     echo "⏬ Fetching latest changes..."
     FETCH_SUCCESS=false
@@ -112,6 +112,17 @@ pull_single_project() {
       git checkout "${DEFAULT_BRANCH}"
       git reset --hard "origin/${DEFAULT_BRANCH}"
       echo "✅ Updated ${project_name} to latest ${DEFAULT_BRANCH}."
+
+      # Execute gitsyncfirst.sh AFTER pulling (for dependency restoration)
+      if [[ -f "${target_dir}/gitsyncfirst.sh" ]]; then
+        echo ""
+        echo "🔧 Found gitsyncfirst.sh - executing post-pull sync..."
+        echo ""
+        bash "${target_dir}/gitsyncfirst.sh" "pull" || {
+          echo "⚠️  gitsyncfirst.sh failed during restore"
+        }
+        echo ""
+      fi
     else
       echo "⚠️  Could not fetch after $MAX_RETRIES attempts. Skipping update."
     fi
@@ -137,6 +148,17 @@ pull_single_project() {
       if [ $CLONE_EXIT -eq 0 ]; then
         CLONE_SUCCESS=true
         echo "✅ Cloned ${project_name} into ${target_dir}."
+
+        # Execute gitsyncfirst.sh AFTER cloning (for dependency restoration)
+        if [[ -f "${target_dir}/gitsyncfirst.sh" ]]; then
+          echo ""
+          echo "🔧 Found gitsyncfirst.sh - executing post-clone sync..."
+          echo ""
+          bash "${target_dir}/gitsyncfirst.sh" "pull" || {
+            echo "⚠️  gitsyncfirst.sh failed during restore"
+          }
+          echo ""
+        fi
       elif [ $CLONE_EXIT -eq 124 ]; then
         echo "   ⏱️  Clone attempt $((RETRY_COUNT + 1)) timed out after 15 seconds"
         rm -rf "${target_dir}"

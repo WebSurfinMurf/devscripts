@@ -105,7 +105,17 @@ version_single_project() {
   fi
   
   cd "${target_dir}"
-  
+
+  # Execute gitsyncfirst.sh if it exists (for dependency syncing before versioning)
+  if [[ -f "${target_dir}/gitsyncfirst.sh" ]]; then
+    echo "🔧 Found gitsyncfirst.sh - executing pre-version sync..."
+    echo ""
+    bash "${target_dir}/gitsyncfirst.sh" "version" || {
+      echo "⚠️  gitsyncfirst.sh failed, but continuing with git operations..."
+    }
+    echo ""
+  fi
+
   # Sync branch & tags with retry logic
   echo "⏬ Fetching tags..."
   FETCH_SUCCESS=false

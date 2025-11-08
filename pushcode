@@ -92,12 +92,22 @@ push_single_project() {
   fi
 
   cd "${target_dir}"
-  
+
   # Add safe.directory to avoid ownership issues
   export GIT_CONFIG_COUNT=1
   export GIT_CONFIG_KEY_0="safe.directory"
   export GIT_CONFIG_VALUE_0="${target_dir}"
-  
+
+  # Execute gitsyncfirst.sh if it exists (for dependency syncing)
+  if [[ -f "${target_dir}/gitsyncfirst.sh" ]]; then
+    echo "🔧 Found gitsyncfirst.sh - executing pre-push sync..."
+    echo ""
+    bash "${target_dir}/gitsyncfirst.sh" "push" || {
+      echo "⚠️  gitsyncfirst.sh failed, but continuing with git operations..."
+    }
+    echo ""
+  fi
+
   # Skip fetch/pull for projects with .nofetch marker
   SKIP_FETCH=false
   if [[ -f "${target_dir}/.nofetch" ]]; then
