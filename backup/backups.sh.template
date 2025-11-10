@@ -1,0 +1,21 @@
+################################################################################
+# DEPLOYMENT INSTRUCTIONS FOR AI
+################################################################################
+# This is the VERSION-CONTROLLED template file.
+#
+# Source Location: /home/administrator/projects/devscripts/backup/backups.sh.template
+# Deploy Location: /etc/profile.d/backups.sh
+#
+# When making changes:
+# 1. Edit THIS file (the one in projects/devscripts/backup/)
+# 2. Deploy with: sudo cp /home/administrator/projects/devscripts/backup/backups.sh.template /etc/profile.d/backups.sh
+# 3. Make executable: sudo chmod +x /etc/profile.d/backups.sh
+#
+# Note: The setup-backup-mount.sh and setup-backup-env.sh scripts automatically
+#       deploy this file. Manual deployment is only needed if you want to update
+#       the environment variable configuration separately.
+################################################################################
+
+# Set BACKUPS environment variable for all users
+# Points to user's backup directory on thumb drive
+export BACKUPS="/mnt/backup/backups/usr/$USER/projects"
