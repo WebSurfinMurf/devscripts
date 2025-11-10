@@ -1,0 +1,26 @@
+################################################################################
+# DEPLOYMENT INSTRUCTIONS FOR AI
+################################################################################
+# This is the VERSION-CONTROLLED template file.
+#
+# Source Location: /home/administrator/projects/devscripts/backup/backup-cron.template
+# Deploy Location: /etc/cron.d/backup-projects
+#
+# When making changes:
+# 1. Edit THIS file (the one in projects/devscripts/backup/)
+# 2. Deploy with: sudo cp /home/administrator/projects/devscripts/backup/backup-cron.template /etc/cron.d/backup-projects
+# 3. Set permissions: sudo chmod 644 /etc/cron.d/backup-projects
+#
+# To enable cron job: Deploy this file to /etc/cron.d/
+# To disable cron job: Remove /etc/cron.d/backup-projects
+################################################################################
+
+# System-wide backup cron job
+# Runs daily at 4:00 AM for all users
+# Backs up ~/projects/data/ with rotation (7 daily, 4 weekly, 6 monthly)
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# Minute Hour Day Month DayOfWeek User Command
+0 4 * * * root /home/administrator/projects/devscripts/backup/backup-projects-data.sh >> /var/log/backup-cron.log 2>&1

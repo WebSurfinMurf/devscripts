@@ -41,9 +41,17 @@ fi
 # Create the profile script
 echo "Creating $PROFILE_FILE..."
 cat > "$PROFILE_FILE" <<'EOF'
-# Set BACKUPS environment variable for all users
-# Points to user's backup directory on thumb drive
-export BACKUPS="/mnt/backup/backups/usr/$USER/projects"
+# Backup system environment variables
+# Two-tier design: system-wide root + per-user projects directory
+
+# BACKUPROOT: System-wide backup root (same for all users)
+# Used by: System-wide scripts, admin operations, cross-user tasks
+export BACKUPROOT="/mnt/backup/backups/usr"
+
+# BACKUPS: Per-user backup directory (different for each user)
+# Used by: Individual user backup operations, user-facing commands
+# Points to user's backup root (not projects subdirectory)
+export BACKUPS="$BACKUPROOT/$USER"
 EOF
 
 # Make it executable
@@ -56,19 +64,23 @@ cat "$PROFILE_FILE"
 echo ""
 echo "=== Setup Complete ==="
 echo ""
-echo "The \$BACKUPS variable will be set for all users on their next login."
+echo "Two environment variables will be set for all users on their next login:"
 echo ""
-echo "Each user will have:"
-echo "  administrator: BACKUPS=/mnt/backup/backups/usr/administrator/projects"
-echo "  websurfinmurf: BACKUPS=/mnt/backup/backups/usr/websurfinmurf/projects"
-echo "  apprunner:     BACKUPS=/mnt/backup/backups/usr/apprunner/projects"
-echo "  joe:           BACKUPS=/mnt/backup/backups/usr/joe/projects"
+echo "BACKUPROOT (system-wide):"
+echo "  /mnt/backup/backups/usr"
+echo ""
+echo "BACKUPS (per-user):"
+echo "  administrator: /mnt/backup/backups/usr/administrator"
+echo "  websurfinmurf: /mnt/backup/backups/usr/websurfinmurf"
+echo "  apprunner:     /mnt/backup/backups/usr/apprunner"
+echo "  joe:           /mnt/backup/backups/usr/joe"
 echo ""
 echo "Usage examples:"
+echo "  echo \$BACKUPROOT"
 echo "  echo \$BACKUPS"
-echo "  ls \$BACKUPS"
-echo "  rsync -avh ~/projects/data/ \$BACKUPS/data/"
+echo "  ls \$BACKUPS/projects/data/"
 echo ""
 echo "To activate in current session without re-login:"
 echo "  source /etc/profile.d/backups.sh"
+echo "  echo \$BACKUPROOT"
 echo "  echo \$BACKUPS"

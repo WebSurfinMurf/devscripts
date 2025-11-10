@@ -16,6 +16,14 @@
 #       the environment variable configuration separately.
 ################################################################################
 
-# Set BACKUPS environment variable for all users
-# Points to user's backup directory on thumb drive
-export BACKUPS="/mnt/backup/backups/usr/$USER/projects"
+# Backup system environment variables
+# Two-tier design: system-wide root + per-user projects directory
+
+# BACKUPROOT: System-wide backup root (same for all users)
+# Used by: System-wide scripts, admin operations, cross-user tasks
+export BACKUPROOT="/mnt/backup/backups/usr"
+
+# BACKUPS: Per-user backup directory (different for each user)
+# Used by: Individual user backup operations, user-facing commands
+# Points to user's backup root (not projects subdirectory)
+export BACKUPS="$BACKUPROOT/$USER"
