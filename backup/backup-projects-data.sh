@@ -74,6 +74,32 @@ echo "First Saturday: $IS_FIRST_SATURDAY"
 echo "Backup types: Daily$([ "$IS_SATURDAY" = true ] && echo ", Weekly")$([ "$IS_FIRST_SATURDAY" = true ] && echo ", Monthly")"
 echo ""
 
+# PRE-BACKUP: Force database saves to disk
+echo -e "${BLUE}=== Pre-Backup: Forcing database saves to disk ===${NC}"
+SAVE_SCRIPTS=(
+    "/home/administrator/projects/postgres/manualsavealldb.sh"
+    "/home/administrator/projects/timescaledb/manualsavealldb.sh"
+    "/home/administrator/projects/redis/manualsavealldb.sh"
+    "/home/administrator/projects/mongodb/manualsavealldb.sh"
+    "/home/administrator/projects/qdrant/manualsavealldb.sh"
+    "/home/administrator/projects/arangodb/manualsavealldb.sh"
+)
+
+for SAVE_SCRIPT in "${SAVE_SCRIPTS[@]}"; do
+    if [ -x "$SAVE_SCRIPT" ]; then
+        echo -e "${BLUE}Running: $(basename $(dirname $SAVE_SCRIPT))/$(basename $SAVE_SCRIPT)${NC}"
+        if bash "$SAVE_SCRIPT" 2>&1; then
+            echo -e "${GREEN}✓ Database save completed${NC}"
+        else
+            echo -e "${YELLOW}⚠ Database save failed (non-critical, continuing)${NC}"
+        fi
+        echo ""
+    fi
+done
+
+echo -e "${GREEN}=== All database saves completed ===${NC}"
+echo ""
+
 # Process each user
 for USERNAME in "${USERS[@]}"; do
     echo -e "${BLUE}--- Processing user: $USERNAME ---${NC}"

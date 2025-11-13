@@ -109,6 +109,9 @@ cd ~/projects/myproject
 # Pull single project
 ./pullcode ProjectName
 
+# Pull from GitLab (NEW)
+./pullcode -gitlab claude-code-config
+
 # Pull current directory (NEW)
 cd ~/projects/myproject
 ./pullcode .
@@ -177,3 +180,11 @@ esac
 - Session storage relocated to AINotes/claude/ for organization
 - All session management scripts updated with new paths
 - Ready for claude-code restart with proper context persistence
+
+### Session: 2025-11-12
+- **Added `-gitlab` parameter to pullcode**
+  - Allows explicit GitLab remote specification for new clones
+  - Usage: `pullcode -gitlab claude-code-config`
+  - Existing repos still auto-detect GitLab from remote URL
+  - Solves first-time clone scenario where repo doesn't exist yet
+  - Example: On laptop run `pullcode -gitlab claude-code-config` to clone from GitLab

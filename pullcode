@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
-# Usage: pullcode <GitHub-project-name|all|.>
+# Usage: pullcode [-gitlab] <project-name|all|.>
 # Example: pullcode MyNewApp
+#          pullcode -gitlab claude-code-config
 #          pullcode all
 #          pullcode . (uses current directory)
 
+# Parse arguments
+FORCE_GITLAB=false
+if [[ "${1:-}" == "-gitlab" ]]; then
+  FORCE_GITLAB=true
+  shift
+fi
+
 # check for required project name
 if [ $# -ne 1 ]; then
-  echo "Usage: $0 <GitHub-project-name|all|.>"
+  echo "Usage: $0 [-gitlab] <project-name|all|.>"
+  echo "  Use '-gitlab' to force GitLab remote for new clones"
   echo "  Use 'all' to pull all git repositories in projects directory"
   echo "  Use '.' to pull current directory"
   echo "Example: $0 MyNewApp"
+  echo "Example: $0 -gitlab claude-code-config"
   exit 1
 fi
 
@@ -59,10 +69,16 @@ pull_single_project() {
       echo "🔧 pullcode for '${project_name}' (GitHub) → ${target_dir}"
     fi
   else
-    # New clone defaults to GitHub
-    repo_ssh="git@github.com:WebSurfinMurf/${project_name}.git"
-    remote_type="github"
-    echo "🔧 pullcode for '${project_name}' (GitHub - new) → ${target_dir}"
+    # New clone: check if GitLab forced, otherwise default to GitHub
+    if [[ "${FORCE_GITLAB}" == "true" ]]; then
+      repo_ssh="ssh://git@gitlab.ai-servicers.com:2222/administrators/${project_name}.git"
+      remote_type="gitlab"
+      echo "🔧 pullcode for '${project_name}' (GitLab - forced) → ${target_dir}"
+    else
+      repo_ssh="git@github.com:WebSurfinMurf/${project_name}.git"
+      remote_type="github"
+      echo "🔧 pullcode for '${project_name}' (GitHub - new) → ${target_dir}"
+    fi
   fi
 
   # Respect .nogit for single-project runs too
