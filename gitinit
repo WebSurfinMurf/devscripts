@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail   # Strict mode
+
+# Usage: gitinit -gitlab [group] OR gitinit -github [owner]
+# Example: gitinit -gitlab administrators
+#          gitinit -gitlab developers
+#          gitinit -github WebSurfinMurf
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 -gitlab [group] OR -github [owner]"
+  echo ""
+  echo "Initializes a git repository in the current directory and creates it on GitLab or GitHub."
+  echo ""
+  echo "Examples:"
+  echo "  gitinit -gitlab                    # Create in administrators group (default)"
+  echo "  gitinit -gitlab developers         # Create in developers group"
+  echo "  gitinit -github                    # Create for WebSurfinMurf (default)"
+  echo "  gitinit -github MyOrg              # Create for MyOrg"
+  echo ""
+  echo "After running gitinit, you can use 'gitpush .' to push updates."
+  exit 1
+fi
+
+# Parse platform flag
+PLATFORM=""
+if [[ "$1" == "-gitlab" ]]; then
+  PLATFORM="gitlab"
+  shift
+elif [[ "$1" == "-github" ]]; then
+  PLATFORM="github"
+  shift
+else
+  echo "❌ Error: First argument must be -gitlab or -github"
+  exit 1
+fi
+
+# Get current directory as project name
+CURRENT_DIR="$(pwd)"
+PROJECT_NAME="$(basename "${CURRENT_DIR}")"
+
+echo "🔧 gitinit - Initialize Git Repository"
+echo "   Platform: ${PLATFORM}"
+echo "   Project: ${PROJECT_NAME}"
+echo "   Directory: ${CURRENT_DIR}"
+echo ""
+
+# Check if already a git repo
+if [[ -d ".git" ]]; then
+  echo "❌ Error: This directory is already a git repository."
+  echo "   Use 'git remote -v' to see existing remotes."
+  exit 1
+fi
+
+# Platform-specific configuration
+if [[ "${PLATFORM}" == "gitlab" ]]; then
+  # GitLab configuration
+  DEFAULT_GROUP="administrators"
+  GROUP="${1:-${DEFAULT_GROUP}}"
+  REMOTE_URL="ssh://git@gitlab.ai-servicers.com:2222/${GROUP}/${PROJECT_NAME}.git"
+  WEB_URL="https://gitlab.ai-servicers.com/${GROUP}/${PROJECT_NAME}"
+
+  echo "📦 GitLab Configuration:"
+  echo "   Group: ${GROUP}"
+  echo "   Remote: ${REMOTE_URL}"
+  echo ""
+
+  # Create GitLab project using GitLab CLI
+  echo "🚀 Creating GitLab project..."
+  if command -v glab &> /dev/null; then
+    # Use glab API to create project (doesn't create local directories)
+    # First get the group/namespace ID
+    NAMESPACE_ID=$(GITLAB_HOST=gitlab.ai-servicers.com glab api "groups?search=${GROUP}" 2>/dev/null | jq -r '.[0].id')
+
+    if [ -n "$NAMESPACE_ID" ] && [ "$NAMESPACE_ID" != "null" ]; then
+      # Create project via API
+      if GITLAB_HOST=gitlab.ai-servicers.com glab api --method POST projects \
+         --field name="${PROJECT_NAME}" \
+         --field path="${PROJECT_NAME}" \
+         --field namespace_id="${NAMESPACE_ID}" \
+         --field visibility="private" \
+         --field initialize_with_readme=false \
+         >/dev/null 2>&1; then
+        echo "✅ GitLab project created successfully!"
+      else
+        echo "⚠️  GitLab project may already exist or creation failed."
+        echo "   Continuing with git init..."
+      fi
+    else
+      echo "⚠️  Could not find group '${GROUP}'."
+      echo "   Continuing with git init..."
+    fi
+  else
+    echo "⚠️  'glab' CLI not found. You'll need to create the GitLab project manually:"
+    echo "   1. Open: https://gitlab.ai-servicers.com/projects/new"
+    echo "   2. Project name: ${PROJECT_NAME}"
+    echo "   3. Group: ${GROUP}"
+    echo "   4. Visibility: Private"
+    echo ""
+    read -p "Press Enter after creating the project on GitLab..."
+  fi
+
+elif [[ "${PLATFORM}" == "github" ]]; then
+  # GitHub configuration
+  DEFAULT_OWNER="WebSurfinMurf"
+  OWNER="${1:-${DEFAULT_OWNER}}"
+  REMOTE_URL="git@github.com:${OWNER}/${PROJECT_NAME}.git"
+  WEB_URL="https://github.com/${OWNER}/${PROJECT_NAME}"
+
+  echo "📦 GitHub Configuration:"
+  echo "   Owner: ${OWNER}"
+  echo "   Remote: ${REMOTE_URL}"
+  echo ""
+
+  # Create GitHub project using GitHub CLI
+  echo "🚀 Creating GitHub repository..."
+  if command -v gh &> /dev/null; then
+    # Use gh if available
+    if gh repo create "${OWNER}/${PROJECT_NAME}" --private 2>&1; then
+      echo "✅ GitHub repository created successfully!"
+    else
+      echo "⚠️  GitHub repository may already exist or gh failed."
+      echo "   Continuing with git init..."
+    fi
+  else
+    echo "⚠️  'gh' CLI not found. You'll need to create the GitHub repository manually:"
+    echo "   1. Open: https://github.com/new"
+    echo "   2. Repository name: ${PROJECT_NAME}"
+    echo "   3. Owner: ${OWNER}"
+    echo "   4. Set as Private"
+    echo "   5. DO NOT add README, .gitignore, or license"
+    echo ""
+    read -p "Press Enter after creating the repository on GitHub..."
+  fi
+fi
+
+echo ""
+echo "📦 Initializing local Git repository..."
+
+# Initialize git
+git init
+git branch -M main
+
+# Create README if it doesn't exist
+if [[ ! -f "README.md" ]]; then
+  echo "# ${PROJECT_NAME}" > README.md
+  echo "" >> README.md
+  echo "Project initialized on $(date)" >> README.md
+  echo "📝 Created README.md"
+fi
+
+# Create .gitignore if it doesn't exist
+if [[ ! -f ".gitignore" ]]; then
+  cat > .gitignore << 'EOF'
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.local
+*.env
+
+# Dependencies
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+build/
+*.log
+EOF
+  echo "📝 Created .gitignore"
+fi
+
+# Add all files
+echo "📝 Staging all files..."
+git add --all
+
+# Initial commit
+echo "💬 Creating initial commit..."
+git commit -m "Initial commit
+
+🤖 Generated with gitinit script"
+
+# Add remote
+echo "🔗 Adding remote origin..."
+git remote add origin "${REMOTE_URL}"
+
+# Push to remote
+echo "🚀 Pushing to ${PLATFORM}..."
+if git push -u origin main 2>&1; then
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo "✅ SUCCESS! Repository initialized and pushed to ${PLATFORM}"
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+  echo "🔗 Repository URL: ${WEB_URL}"
+  echo ""
+  echo "📋 Next steps:"
+  echo "   • Use 'gitpush .' to push updates from this directory"
+  echo "   • Use 'gitpull ${PROJECT_NAME}' to pull from other machines"
+  echo "   • Files are tracked by git - commit regularly!"
+  echo ""
+else
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo "⚠️  PUSH FAILED"
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+  echo "The repository was created but the push failed."
+  echo "This might mean:"
+  echo "  • The remote repository doesn't exist yet"
+  echo "  • SSH keys aren't configured"
+  echo "  • Network connectivity issues"
+  echo ""
+  echo "Try running: git push -u origin main"
+  echo ""
+  exit 1
+fi

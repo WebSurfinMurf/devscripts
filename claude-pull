@@ -17,7 +17,7 @@ export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0="safe.directory"
 export GIT_CONFIG_VALUE_0="${REPO_DIR}"
 
-# Pull latest from GitLab using pullcode
+# Pull latest from GitLab using gitpull
 if [[ -d "${REPO_DIR}/.git" ]]; then
   echo "📥 Pulling latest from GitLab..."
   cd "${REPO_DIR}"

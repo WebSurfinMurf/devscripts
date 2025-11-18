@@ -146,11 +146,22 @@ for USERNAME in "${USERS[@]}"; do
     # Create backups based on schedule
     BACKUPS_CREATED=0
 
+    # Exclusions applied to all backups:
+    # - data/netdata/cache/*.db* : Runtime metadata cache (auto-regenerated, ~656MB)
+    # - data/volume-backups/* : Old nested backups (backups inside backups, ~235MB)
+    # - data/mongodb/journal/* : MongoDB WAL files (ephemeral, ~315MB)
+    # - data/gitlab/logs/*.log : GitLab logs (growing continuously, ~100MB+)
+
     # 1. DAILY BACKUP (always)
     DAILY_FILE="$BACKUP_DIR/${PROJECT_NAME}-daily-${TODAY}.tar.gz"
     if [ ! -f "$DAILY_FILE" ]; then
         echo -e "${GREEN}  → Creating daily backup...${NC}"
-        if tar -czf "$DAILY_FILE" -C "$USER_HOME/projects" "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
+        if tar -czf "$DAILY_FILE" -C "$USER_HOME/projects" \
+            --exclude='data/netdata/cache/*.db*' \
+            --exclude='data/volume-backups/*' \
+            --exclude='data/mongodb/journal/*' \
+            --exclude='data/gitlab/logs/*.log' \
+            "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
             BACKUP_SIZE=$(du -sh "$DAILY_FILE" | cut -f1)
             echo "$(date '+%Y-%m-%d %H:%M:%S') - DAILY - Created: $(basename "$DAILY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
             echo -e "${GREEN}    ✓ Daily backup created: $BACKUP_SIZE${NC}"
@@ -169,7 +180,12 @@ for USERNAME in "${USERS[@]}"; do
         WEEKLY_FILE="$BACKUP_DIR/${PROJECT_NAME}-weekly-${TODAY}.tar.gz"
         if [ ! -f "$WEEKLY_FILE" ]; then
             echo -e "${GREEN}  → Creating weekly backup...${NC}"
-            if tar -czf "$WEEKLY_FILE" -C "$USER_HOME/projects" "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
+            if tar -czf "$WEEKLY_FILE" -C "$USER_HOME/projects" \
+                --exclude='data/netdata/cache/*.db*' \
+                --exclude='data/volume-backups/*' \
+                --exclude='data/mongodb/journal/*' \
+                --exclude='data/gitlab/logs/*.log' \
+                "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
                 BACKUP_SIZE=$(du -sh "$WEEKLY_FILE" | cut -f1)
                 echo "$(date '+%Y-%m-%d %H:%M:%S') - WEEKLY - Created: $(basename "$WEEKLY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
                 echo -e "${GREEN}    ✓ Weekly backup created: $BACKUP_SIZE${NC}"
@@ -189,7 +205,12 @@ for USERNAME in "${USERS[@]}"; do
         MONTHLY_FILE="$BACKUP_DIR/${PROJECT_NAME}-monthly-${TODAY}.tar.gz"
         if [ ! -f "$MONTHLY_FILE" ]; then
             echo -e "${GREEN}  → Creating monthly backup...${NC}"
-            if tar -czf "$MONTHLY_FILE" -C "$USER_HOME/projects" "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
+            if tar -czf "$MONTHLY_FILE" -C "$USER_HOME/projects" \
+                --exclude='data/netdata/cache/*.db*' \
+                --exclude='data/volume-backups/*' \
+                --exclude='data/mongodb/journal/*' \
+                --exclude='data/gitlab/logs/*.log' \
+                "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
                 BACKUP_SIZE=$(du -sh "$MONTHLY_FILE" | cut -f1)
                 echo "$(date '+%Y-%m-%d %H:%M:%S') - MONTHLY - Created: $(basename "$MONTHLY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
                 echo -e "${GREEN}    ✓ Monthly backup created: $BACKUP_SIZE${NC}"

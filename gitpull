@@ -1,0 +1,232 @@
+#!/usr/bin/env bash
+set -euo pipefail   # exit on error, undefined var, or pipeline failure
+
+# Usage: gitpull [-gitlab] <project-name|all|.>
+# Example: gitpull MyNewApp
+#          gitpull -gitlab claude-code-config
+#          gitpull all
+#          gitpull . (uses current directory)
+
+# Parse arguments
+FORCE_GITLAB=false
+if [[ "${1:-}" == "-gitlab" ]]; then
+  FORCE_GITLAB=true
+  shift
+fi
+
+# check for required project name
+if [ $# -ne 1 ]; then
+  echo "Usage: $0 [-gitlab] <project-name|all|.>"
+  echo "  Use '-gitlab' to force GitLab remote for new clones"
+  echo "  Use 'all' to pull all git repositories in projects directory"
+  echo "  Use '.' to pull current directory"
+  echo "Example: $0 MyNewApp"
+  echo "Example: $0 -gitlab claude-code-config"
+  exit 1
+fi
+
+PROJECT="$1"
+
+# Handle current directory mode
+if [[ "${PROJECT}" == "." ]]; then
+  # Use current directory
+  CURRENT_DIR="$(pwd)"
+  PROJECT="$(basename "${CURRENT_DIR}")"
+  USE_CURRENT_DIR=true
+
+  # Special handling for .claude directories - redirect to claude-pull
+  if [[ "${CURRENT_DIR}" == "${HOME}/.claude" ]] || [[ "${CURRENT_DIR}" == "${HOME}/projects/.claude" ]]; then
+    echo "🔧 Detected .claude directory - using claude-pull instead"
+    echo ""
+    exec claude-pull
+  fi
+
+  echo "🔧 Using current directory: ${CURRENT_DIR}"
+  echo "🔧 Detected project name: ${PROJECT}"
+else
+  USE_CURRENT_DIR=false
+fi
+BASE_DIR="${HOME}/projects"
+DEFAULT_BRANCH="main"
+
+# Function to pull a single project
+pull_single_project() {
+  local project_name="$1"
+  local target_dir="${2:-${BASE_DIR}/${project_name}}"  # Optional 2nd param for custom dir
+  local repo_ssh=""
+  local remote_type="github"
+
+  # Auto-detect remote type from existing repo
+  if [ -d "${target_dir}/.git" ]; then
+    cd "${target_dir}"
+    if git remote get-url origin 2>/dev/null | grep -q "gitlab.ai-servicers.com"; then
+      repo_ssh="ssh://git@gitlab.ai-servicers.com:2222/administrators/${project_name}.git"
+      remote_type="gitlab"
+      echo "🔧 gitpull for '${project_name}' (GitLab) → ${target_dir}"
+    else
+      repo_ssh="git@github.com:WebSurfinMurf/${project_name}.git"
+      remote_type="github"
+      echo "🔧 gitpull for '${project_name}' (GitHub) → ${target_dir}"
+    fi
+  else
+    # New clone: check if GitLab forced, otherwise default to GitHub
+    if [[ "${FORCE_GITLAB}" == "true" ]]; then
+      repo_ssh="ssh://git@gitlab.ai-servicers.com:2222/administrators/${project_name}.git"
+      remote_type="gitlab"
+      echo "🔧 gitpull for '${project_name}' (GitLab - forced) → ${target_dir}"
+    else
+      repo_ssh="git@github.com:WebSurfinMurf/${project_name}.git"
+      remote_type="github"
+      echo "🔧 gitpull for '${project_name}' (GitHub - new) → ${target_dir}"
+    fi
+  fi
+
+  # Respect .nogit for single-project runs too
+  if [[ -f "${target_dir}/.nogit" ]]; then
+    echo "⛔ '${project_name}' is marked .nogit; skipping git pull."
+    return 0
+  fi
+
+  # Add safe.directory to avoid ownership issues
+  export GIT_CONFIG_COUNT=1
+  export GIT_CONFIG_KEY_0="safe.directory"
+  export GIT_CONFIG_VALUE_0="${target_dir}"
+
+  if [ -d "${target_dir}/.git" ]; then
+    # existing repo: pull updates
+    echo "📂 Found existing repo; pulling latest on '${DEFAULT_BRANCH}'…"
+    cd "${target_dir}"
+
+    # Fetch with retry logic
+    echo "⏬ Fetching latest changes..."
+    FETCH_SUCCESS=false
+    RETRY_COUNT=0
+    MAX_RETRIES=3
+    
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ]; do
+      if [ $RETRY_COUNT -gt 0 ]; then
+        WAIT_TIME=$((RETRY_COUNT * 2))
+        echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+        sleep $WAIT_TIME
+      fi
+      
+      timeout 7 git fetch --depth=1 origin "${DEFAULT_BRANCH}" 2>&1
+      FETCH_EXIT=$?
+      
+      if [ $FETCH_EXIT -eq 0 ]; then
+        FETCH_SUCCESS=true
+      elif [ $FETCH_EXIT -eq 124 ]; then
+        echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
+      else
+        echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
+      fi
+      
+      RETRY_COUNT=$((RETRY_COUNT + 1))
+    done
+    
+    if [ "$FETCH_SUCCESS" = "true" ]; then
+      git checkout "${DEFAULT_BRANCH}"
+      git reset --hard "origin/${DEFAULT_BRANCH}"
+      echo "✅ Updated ${project_name} to latest ${DEFAULT_BRANCH}."
+
+      # Execute gitsyncfirst.sh AFTER pulling (for dependency restoration)
+      if [[ -f "${target_dir}/gitsyncfirst.sh" ]]; then
+        echo ""
+        echo "🔧 Found gitsyncfirst.sh - executing post-pull sync..."
+        echo ""
+        bash "${target_dir}/gitsyncfirst.sh" "pull" || {
+          echo "⚠️  gitsyncfirst.sh failed during restore"
+        }
+        echo ""
+      fi
+    else
+      echo "⚠️  Could not fetch after $MAX_RETRIES attempts. Skipping update."
+    fi
+  else
+    # new clone with retry logic
+    echo "📂 Directory not found; cloning ${project_name} via SSH…"
+    mkdir -p "${target_dir}"
+    
+    CLONE_SUCCESS=false
+    RETRY_COUNT=0
+    MAX_RETRIES=3
+    
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$CLONE_SUCCESS" = "false" ]; do
+      if [ $RETRY_COUNT -gt 0 ]; then
+        WAIT_TIME=$((RETRY_COUNT * 2))
+        echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
+        sleep $WAIT_TIME
+      fi
+      
+      timeout 15 git clone --depth 1 --branch "${DEFAULT_BRANCH}" "${repo_ssh}" "${target_dir}" 2>&1
+      CLONE_EXIT=$?
+      
+      if [ $CLONE_EXIT -eq 0 ]; then
+        CLONE_SUCCESS=true
+        echo "✅ Cloned ${project_name} into ${target_dir}."
+
+        # Execute gitsyncfirst.sh AFTER cloning (for dependency restoration)
+        if [[ -f "${target_dir}/gitsyncfirst.sh" ]]; then
+          echo ""
+          echo "🔧 Found gitsyncfirst.sh - executing post-clone sync..."
+          echo ""
+          bash "${target_dir}/gitsyncfirst.sh" "pull" || {
+            echo "⚠️  gitsyncfirst.sh failed during restore"
+          }
+          echo ""
+        fi
+      elif [ $CLONE_EXIT -eq 124 ]; then
+        echo "   ⏱️  Clone attempt $((RETRY_COUNT + 1)) timed out after 15 seconds"
+        rm -rf "${target_dir}"
+      else
+        echo "   ⚠️  Clone attempt $((RETRY_COUNT + 1)) failed (exit code: $CLONE_EXIT)"
+        rm -rf "${target_dir}"
+      fi
+      
+      RETRY_COUNT=$((RETRY_COUNT + 1))
+    done
+    
+    if [ "$CLONE_SUCCESS" = "false" ]; then
+      echo "⚠️  Could not clone after $MAX_RETRIES attempts."
+    fi
+  fi
+}
+
+# Handle 'all' parameter
+if [[ "${PROJECT}" == "all" ]]; then
+  echo "🔄 Processing all Git repositories in ${BASE_DIR}..."
+  echo ""
+  
+  # Find all directories with .git subdirectory
+  for dir in "${BASE_DIR}"/*/; do
+    if [[ -d "${dir}/.git" ]]; then
+      repo_name=$(basename "${dir}")
+      echo "════════════════════════════════════════════════════════════"
+      echo "📍 Processing: ${dir}"
+      echo "════════════════════════════════════════════════════════════"
+      
+      # Call function for each repo
+      pull_single_project "${repo_name}" || {
+        echo "⚠️  Failed to process ${repo_name}, continuing with next..."
+      }
+      
+      echo ""
+      
+      # Small delay between repos to avoid overwhelming GitHub
+      if [[ -d "${BASE_DIR}"/*/.git ]]; then
+        echo "   ⏸️  Pausing 2 seconds before next repository..."
+        sleep 2
+      fi
+    fi
+  done
+  
+  echo "✅ All repositories processed!"
+  exit 0
+fi
+
+# Single project pull
+if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
+  pull_single_project "${PROJECT}" "${CURRENT_DIR}"
+else
+  pull_single_project "${PROJECT}"
+fi

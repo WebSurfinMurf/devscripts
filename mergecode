@@ -53,7 +53,7 @@ create_merge_review() {
   # Check if it's a git repo
   if [[ ! -d ".git" ]]; then
     echo "❌ Error: Not a git repository"
-    echo "   Please initialize git first with 'pushcode ${project_name}'"
+    echo "   Please initialize git first with 'gitpush ${project_name}'"
     return 1
   fi
 

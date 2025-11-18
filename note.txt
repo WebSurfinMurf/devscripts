@@ -1,10 +1,10 @@
-commands: note, pushcode, pullcode, cleanup, sharefile, startclaude
+commands: note, gitpush, gitpull, cleanup, sharefile, startclaude
 portainer note: to debug set entry set: tail -f /dev/null
 sharefile <file>             : copy target file to network share \\SHAREDSMA\Flash512\shared  (/mnt/shared/shared)
 cleanup                      : command will remove all docker images for a specified project name.
-pullcode    <project>        : Pull the latest code for that project from git
-pushcode    <project> <note> : Push the code locally to git, and increment version.  optional note
-versioncode <project> <note> : adds version label to all code in a project, optional note
+gitpull    <project>        : Pull the latest code for that project from git
+gitpush    <project> <note> : Push the code locally to git, and increment version.  optional note
+gitversion <project> <note> : adds version label to all code in a project, optional note
                              : optional params -major x.0.0 -stable 0.x.0 -minor 0.0.x (default)
 startclaude                  : start a claude code interactive shell, with optional parameters 
 startclaude --shell --status : start up a container shell   and/or get container status
