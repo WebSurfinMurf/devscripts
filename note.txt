@@ -1,10 +1,15 @@
-commands: note, gitpush, gitpull, cleanup, sharefile, startclaude
+commands: note, gitinit, gitpush, gitpull, gitversion, cleanup, sharefile, startclaude
 portainer note: to debug set entry set: tail -f /dev/null
 sharefile <file>             : copy target file to network share \\SHAREDSMA\Flash512\shared  (/mnt/shared/shared)
 cleanup                      : command will remove all docker images for a specified project name.
+gitinit    -gitlab [group]   : Initialize new git repo and create on GitLab (default: administrators group)
+gitinit    -gitlab developers: Initialize new git repo and create in developers group on GitLab
+gitinit    -github [owner]   : Initialize new git repo and create on GitHub (default: WebSurfinMurf)
+                             : Auto-detects project name from current directory
 gitpull    <project>        : Pull the latest code for that project from git
+gitpull    -gitlab <project>: Pull from GitLab (explicit)
 gitpush    <project> <note> : Push the code locally to git, and increment version.  optional note
 gitversion <project> <note> : adds version label to all code in a project, optional note
                              : optional params -major x.0.0 -stable 0.x.0 -minor 0.0.x (default)
-startclaude                  : start a claude code interactive shell, with optional parameters 
+startclaude                  : start a claude code interactive shell, with optional parameters
 startclaude --shell --status : start up a container shell   and/or get container status
