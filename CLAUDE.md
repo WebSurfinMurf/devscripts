@@ -14,17 +14,200 @@ devscripts/
 │   ├── BACKUP-README.md            # User documentation
 │   ├── BACKUPS-VARIABLE.md         # $BACKUPS env variable docs
 │   └── CLAUDE.md                   # Backup system context
-├── maintenance/                     # Log rotation & cleanup (NEW)
+├── maintenance/                     # Log rotation & cleanup
 │   ├── cleanup-logs-and-ephemeral-data.sh  # Weekly cleanup script
 │   ├── setup-docker-log-rotation.sh        # Docker daemon config (one-time)
 │   ├── README.md                           # Maintenance documentation
 │   └── logs/                               # Cleanup logs
-├── gitinit                          # Initialize git repo on GitLab/GitHub
-├── gitpush                         # Git push helper
-├── gitpull                         # Git pull helper
-├── gitversion                      # Git version/tag helper
-└── CLAUDE.md                        # This file
+├── .claude/                         # Claude Code command definitions
+├── Git Management Scripts
+│   ├── gitinit                      # Initialize git repo on GitLab/GitHub
+│   ├── gitpush                      # Git push helper with retry logic
+│   ├── gitpull                      # Git pull helper with retry logic
+│   └── gitversion                   # Git version/tag helper
+├── System Maintenance Scripts
+│   ├── healthcheck.sh               # System and Docker health monitoring (NEW)
+│   ├── cleanserver.sh               # Docker cleanup and log rotation (NEW)
+│   ├── updatelinux.sh               # System update automation
+│   └── cleanup                      # Legacy Docker container cleanup
+├── Claude Code Management Scripts
+│   ├── claude-push                  # Push Claude config to GitLab
+│   ├── claude-pull                  # Pull Claude config from GitLab
+│   ├── claude-session               # Manage Claude session storage
+│   ├── startclaude                  # Start Claude Code with config
+│   ├── build-claude-index.py        # Build searchable index
+│   ├── validate-claude-md.py        # Validate CLAUDE.md files
+│   ├── bulk-generate-claude.sh      # Generate CLAUDE.md for all projects
+│   ├── update-claude-after-deploy.sh # Update Claude docs post-deployment
+│   └── detect-patterns.py           # Detect code patterns for documentation
+├── Utilities
+│   ├── find-project.py              # Search for projects by name/pattern
+│   ├── mergecode                    # Merge code from multiple sources
+│   ├── restorecode                  # Restore code from backups
+│   ├── sharefile                    # Share file via temporary link
+│   ├── note                         # Quick note-taking utility
+│   ├── cleanup-github-repos.sh      # Clean sensitive data from Git
+│   └── delete_repos.sh              # Bulk delete repositories
+├── Tools
+│   ├── glab                         # GitLab CLI (44MB binary)
+│   ├── claude-diff.py               # Compare Claude configurations
+│   └── project-health-check.py      # Project health assessment
+└── Documentation
+    ├── CLAUDE.md                    # This file
+    ├── LICENSE                      # Project license
+    └── note.txt                     # Session notes
 ```
+
+## Scripts Inventory
+
+### System Maintenance (NEW)
+
+**healthcheck.sh** - System and Docker Health Check
+- Checks Docker daemon, container health, disk/memory/CPU usage
+- Analyzes recent container log errors (last hour)
+- Detects recurring errors (3+ occurrences)
+- Logs all output to `/home/administrator/projects/data/logs/healthcheck/`
+- Auto-removes logs older than 90 days
+- Exit codes: 0=healthy, 1-99=fatal errors, 100+=soft warnings
+- Usage: `./healthcheck.sh`
+
+**cleanserver.sh** - Server Cleanup
+- Removes stopped Docker containers
+- Prunes dangling Docker images
+- Prunes dangling Docker volumes (safe - only unused)
+- Clears Docker build cache
+- Removes all log files older than 90 days from `/home/administrator/projects/data/logs/`
+- Must run as administrator user
+- Exit codes: 0=success, N=number of errors
+- Usage: `./cleanserver.sh`
+
+**updatelinux.sh** - System Update Automation
+- Updates Ubuntu packages
+- Handles Docker and system-level updates
+- Usage: `./updatelinux.sh`
+
+### Git Management
+
+**gitinit** - Initialize Git Repository
+- Creates repo on GitLab (administrators/developers group) or GitHub
+- Initializes local git repo with README and .gitignore
+- Pushes initial commit
+- Usage: `gitinit -gitlab [group]` or `gitinit -github [owner]`
+
+**gitpush** - Git Push Helper
+- Commits and pushes changes to remote
+- Supports single project, current directory (.), or all projects
+- 3-attempt retry with exponential backoff
+- Runs gitsyncfirst.sh if present
+- Usage: `gitpush <project|.|all> "commit message"`
+
+**gitpull** - Git Pull Helper
+- Pulls latest changes from remote
+- Supports GitLab and GitHub repos
+- Handles new clones and existing repos
+- Runs gitsyncfirst.sh after pull if present
+- Usage: `gitpull <project|.|all>` or `gitpull -gitlab <project>`
+
+**gitversion** - Git Version/Tag Helper
+- Creates version tags (patch/stable/major)
+- Supports single project, current directory (.), or all projects
+- Runs gitsyncfirst.sh before tagging
+- Usage: `gitversion <project|.|all> [-stable|-major] "message"`
+
+### Claude Code Management
+
+**claude-push** - Push Claude Config to GitLab
+- Backs up ~/.claude and ~/projects/.claude to GitLab
+- Usage: `claude-push "commit message"`
+
+**claude-pull** - Pull Claude Config from GitLab
+- Restores Claude configuration from GitLab
+- Usage: `claude-pull`
+
+**build-claude-index.py** - Build Searchable Index
+- Creates searchable index of projects and documentation
+- Python script (9.0K)
+
+**validate-claude-md.py** - Validate CLAUDE.md Files
+- Validates structure and content of CLAUDE.md files
+- Python script (12K)
+
+**bulk-generate-claude.sh** - Generate CLAUDE.md for All Projects
+- Auto-generates CLAUDE.md files for projects
+- Bash script (3.4K)
+
+**update-claude-after-deploy.sh** - Update Docs Post-Deployment
+- Updates Claude documentation after service deployment
+- Bash script (2.9K)
+
+**detect-patterns.py** - Detect Code Patterns
+- Analyzes code for patterns to document
+- Python script (21K)
+
+**claude-diff.py** - Compare Claude Configurations
+- Compares different Claude config versions
+- Python script (15K)
+
+**claude-session** - Manage Claude Session Storage
+- Manages Claude Code session data
+- Bash script (3.1K)
+
+**startclaude** - Start Claude Code
+- Launches Claude Code with proper configuration
+- Bash script (3.4K)
+
+### Utilities
+
+**find-project.py** - Search Projects
+- Searches for projects by name or pattern
+- Python script (7.6K)
+
+**mergecode** - Merge Code
+- Merges code from multiple sources
+- Bash script (6.9K)
+
+**restorecode** - Restore Code
+- Restores code from backups
+- Bash script (2.1K)
+
+**sharefile** - Share Files
+- Creates temporary file sharing links
+- Bash script (759 bytes)
+
+**note** - Quick Notes
+- Quick note-taking utility
+- Bash script (1.3K)
+
+**cleanup-github-repos.sh** - Clean Git Repositories
+- Removes sensitive data from Git history
+- Bash script (4.0K)
+
+**delete_repos.sh** - Bulk Delete Repositories
+- Deletes multiple repositories
+- Bash script (842 bytes)
+
+**cleanup** - Docker Container Cleanup (Legacy)
+- Original Docker cleanup script
+- Bash script (3.4K)
+- Note: Superseded by cleanserver.sh
+
+**project-health-check.py** - Project Health Assessment
+- Assesses overall project health
+- Python script (6.6K)
+
+### Tools
+
+**glab** - GitLab CLI
+- Official GitLab command-line interface
+- Binary (44MB)
+- Version: v1.77.0
+- Configured for gitlab.ai-servicers.com
+
+### Documentation
+
+**CLAUDE.md** - This file (12K)
+**LICENSE** - MIT License (1.1K)
+**note.txt** - Session notes and reminders (1.4K)
 
 ## Recent Work & Changes
 _This section is updated by Claude during each session_
@@ -172,6 +355,10 @@ cd maintenance/
 sudo ./cleanup-logs-and-ephemeral-data.sh --dry-run  # Preview cleanup
 sudo ./cleanup-logs-and-ephemeral-data.sh            # Run cleanup
 sudo ./setup-docker-log-rotation.sh                  # One-time Docker log config
+
+# System health and cleanup (NEW)
+./healthcheck.sh                   # Check system and Docker health
+./cleanserver.sh                   # Clean up Docker and logs
 ```
 
 ## Using gitsyncfirst.sh for Dependency Syncing
@@ -269,3 +456,39 @@ esac
   - Updated all internal references in scripts
   - Updated all documentation (CLAUDE.md, note.txt, etc.)
   - Maintains git command naming convention (like gitinit)
+
+### Session: 2025-11-22
+- **Created healthcheck.sh - System and Docker Health Monitor**
+  - Comprehensive health checks: Docker daemon, containers, disk, memory, CPU, network
+  - Container health validation (unhealthy, restarting, high restart counts)
+  - Critical infrastructure monitoring (traefik, keycloak, postgres, loki, grafana)
+  - **Log error analysis**: Scans last hour of container logs for recurring errors (3+ occurrences)
+  - Filters out benign errors (shutdowns, network timeouts, handshake failures)
+  - **Logging**: All output saved to `/home/administrator/projects/data/logs/healthcheck/`
+  - Auto-cleanup: Removes healthcheck logs older than 90 days
+  - Exit codes: 0=healthy, 1-99=fatal errors, 100+N=soft warnings
+  - Fixed 3 fatal errors: timescaledb unhealthy, postgres unhealthy, mcp-memory restarting
+    - Root cause: Missing environment variables in healthcheck commands
+    - Solution: Redeployed containers with proper environment loading
+    - mcp-memory: Removed (stdio MCP server shouldn't run as daemon)
+
+- **Created cleanserver.sh - Server Cleanup Script**
+  - Docker cleanup: Stopped containers, dangling images, dangling volumes, build cache
+  - **Log cleanup**: Removes all `.log` files older than 90 days from `/home/administrator/projects/data/logs/`
+  - Recursive search through all log subdirectories
+  - Shows space freed and cleanup summary
+  - Must run as administrator user
+  - Exit codes: 0=success, N=number of errors
+  - First run freed ~29GB (build cache and dangling resources)
+
+- **Enhanced both scripts with logging and maintenance**
+  - healthcheck.sh: Auto-creates log directory, timestamps all runs
+  - cleanserver.sh: Scans entire data/logs tree for old files
+  - Both scripts maintain their own logs (healthcheck 90-day retention)
+  - Log location: `/home/administrator/projects/data/logs/healthcheck/`
+
+- **Updated CLAUDE.md with complete scripts inventory**
+  - Added comprehensive "Scripts Inventory" section
+  - Categorized all 27+ scripts by function
+  - Documented purpose, usage, and key features for each script
+  - File sizes and types included
