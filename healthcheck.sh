@@ -59,12 +59,8 @@ MEMORY_FATAL_THRESHOLD=95
 LOAD_WARN_MULTIPLIER=2
 LOAD_FATAL_MULTIPLIER=4
 
-# Logging setup (different paths for server vs laptop)
-if [ "$MODE" = "server" ]; then
-    LOG_DIR="/home/administrator/projects/data/logs/healthcheck"
-else
-    LOG_DIR="$HOME/projects/data/logs/devscript"
-fi
+# Logging setup
+LOG_DIR="$HOME/projects/data/logs/devscripts"
 LOG_FILE="$LOG_DIR/healthcheck-$(date +%Y-%m-%d-%H%M%S).log"
 
 # Create log directory if it doesn't exist
