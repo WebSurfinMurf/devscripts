@@ -11,10 +11,21 @@
 #   Exit 3   = 3 fatal errors
 #   Exit 104 = 4 soft errors (no fatal)
 #
-# Usage: ./healthcheck.sh
+# Usage:
+#   ./healthcheck.sh           # Auto-detect mode (server/laptop)
+#   ./healthcheck.sh -server   # Force server mode
+#   ./healthcheck.sh -laptop   # Force laptop mode
 #
 
 set -uo pipefail
+
+# Parse command-line arguments
+MODE="auto"
+if [ "${1:-}" = "-server" ]; then
+    MODE="server"
+elif [ "${1:-}" = "-laptop" ]; then
+    MODE="laptop"
+fi
 
 # Color codes for output
 RED='\033[0;31m'
@@ -26,6 +37,20 @@ NC='\033[0m' # No Color
 FATAL_COUNT=0
 SOFT_COUNT=0
 
+# Auto-detect mode if not explicitly set
+if [ "$MODE" = "auto" ]; then
+    # Check if critical infrastructure containers exist (indicates server)
+    if command -v docker &> /dev/null && systemctl is-active --quiet docker 2>/dev/null; then
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^(traefik|keycloak|postgres)$"; then
+            MODE="server"
+        else
+            MODE="laptop"
+        fi
+    else
+        MODE="laptop"
+    fi
+fi
+
 # Thresholds
 DISK_WARN_THRESHOLD=80
 DISK_FATAL_THRESHOLD=95
@@ -34,8 +59,12 @@ MEMORY_FATAL_THRESHOLD=95
 LOAD_WARN_MULTIPLIER=2
 LOAD_FATAL_MULTIPLIER=4
 
-# Logging setup
-LOG_DIR="/home/administrator/projects/data/logs/healthcheck"
+# Logging setup (different paths for server vs laptop)
+if [ "$MODE" = "server" ]; then
+    LOG_DIR="/home/administrator/projects/data/logs/healthcheck"
+else
+    LOG_DIR="$HOME/projects/data/logs/devscript"
+fi
 LOG_FILE="$LOG_DIR/healthcheck-$(date +%Y-%m-%d-%H%M%S).log"
 
 # Create log directory if it doesn't exist
@@ -48,17 +77,23 @@ exec 2>&1
 echo "========================================"
 echo "System Health Check - $(date)"
 echo "========================================"
+echo "Mode: $MODE"
 echo "Hostname: $(hostname)"
 echo "Log file: $LOG_FILE"
 echo ""
 
 #
-# 1. DOCKER DAEMON CHECK (FATAL)
+# 1. DOCKER DAEMON CHECK (FATAL in server mode, SOFT in laptop mode)
 #
 echo "[CHECK] Docker daemon status..."
-if ! systemctl is-active --quiet docker; then
-    echo -e "${RED}[FATAL]${NC} Docker daemon is not running"
-    ((FATAL_COUNT++))
+if ! systemctl is-active --quiet docker 2>/dev/null; then
+    if [ "$MODE" = "server" ]; then
+        echo -e "${RED}[FATAL]${NC} Docker daemon is not running"
+        ((FATAL_COUNT++))
+    else
+        echo -e "${YELLOW}[WARN]${NC} Docker daemon is not running (optional in laptop mode)"
+        ((SOFT_COUNT++))
+    fi
 else
     echo -e "${GREEN}[OK]${NC} Docker daemon is running"
 fi
@@ -121,14 +156,16 @@ if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
         SOFT_COUNT=$((SOFT_COUNT + 1))
     fi
 
-    # Check critical infrastructure containers (fatal if not running)
-    CRITICAL_CONTAINERS=("traefik" "keycloak" "postgres" "loki" "grafana")
-    for container in "${CRITICAL_CONTAINERS[@]}"; do
-        if ! docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
-            echo -e "${RED}[FATAL]${NC} Critical container not running: $container"
-            ((FATAL_COUNT++))
-        fi
-    done
+    # Check critical infrastructure containers (fatal if not running) - SERVER MODE ONLY
+    if [ "$MODE" = "server" ]; then
+        CRITICAL_CONTAINERS=("traefik" "keycloak" "postgres" "loki" "grafana")
+        for container in "${CRITICAL_CONTAINERS[@]}"; do
+            if ! docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
+                echo -e "${RED}[FATAL]${NC} Critical container not running: $container"
+                ((FATAL_COUNT++))
+            fi
+        done
+    fi
 
     if [ $FATAL_COUNT -eq 0 ] && [ $SOFT_COUNT -eq 0 ]; then
         echo -e "${GREEN}[OK]${NC} All containers healthy"
@@ -223,21 +260,168 @@ else
     echo -e "${GREEN}[OK]${NC} Internet connectivity"
 fi
 
-# Check critical Docker networks exist (fatal if missing)
-if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
+# Check critical Docker networks exist (fatal if missing) - SERVER MODE ONLY
+if [ "$MODE" = "server" ] && command -v docker &> /dev/null && systemctl is-active --quiet docker; then
     CRITICAL_NETWORKS=("traefik-net" "postgres-net" "keycloak-net")
+    NETWORK_FAIL=0
     for network in "${CRITICAL_NETWORKS[@]}"; do
         if ! docker network ls --format '{{.Name}}' | grep -q "^${network}$"; then
             echo -e "${RED}[FATAL]${NC} Critical Docker network missing: $network"
             ((FATAL_COUNT++))
+            NETWORK_FAIL=1
         fi
     done
-    echo -e "${GREEN}[OK]${NC} Critical Docker networks exist"
+    if [ $NETWORK_FAIL -eq 0 ]; then
+        echo -e "${GREEN}[OK]${NC} Critical Docker networks exist"
+    fi
 fi
 echo ""
 
 #
-# 7. SYSTEM UPTIME
+# 7. LAPTOP-SPECIFIC CHECKS
+#
+if [ "$MODE" = "laptop" ]; then
+    #
+    # 7a. WiFi STATUS AND QUALITY CHECK
+    #
+    echo "[CHECK] WiFi status and quality..."
+
+    # Find wireless interface
+    WIFI_INTERFACE=$(ip link | grep -o 'wl[^:]*' | head -1)
+
+    if [ -n "$WIFI_INTERFACE" ]; then
+        # Check if interface is up
+        if ip link show "$WIFI_INTERFACE" | grep -q "state UP"; then
+            echo -e "${GREEN}[OK]${NC} WiFi interface $WIFI_INTERFACE is up"
+
+            # Get connection details if available
+            if command -v iwconfig &> /dev/null; then
+                SSID=$(iwconfig "$WIFI_INTERFACE" 2>/dev/null | grep ESSID | sed 's/.*ESSID:"\(.*\)".*/\1/')
+                SIGNAL=$(iwconfig "$WIFI_INTERFACE" 2>/dev/null | grep "Signal level" | sed 's/.*Signal level=\(.*\) dBm.*/\1/')
+
+                if [ -n "$SSID" ] && [ "$SSID" != "off/any" ]; then
+                    echo "  Connected to: $SSID"
+                    if [ -n "$SIGNAL" ]; then
+                        echo "  Signal strength: ${SIGNAL} dBm"
+                        # Warn if signal is weak (below -70 dBm)
+                        if [ "$SIGNAL" -lt -70 ]; then
+                            echo -e "${YELLOW}[WARN]${NC} Weak WiFi signal (${SIGNAL} dBm)"
+                            ((SOFT_COUNT++))
+                        fi
+                    fi
+                fi
+            fi
+
+            # Check for recent disconnects in journal
+            RECENT_DISCONNECTS=$(journalctl --no-pager -b --since "1 hour ago" 2>/dev/null | grep -i "$WIFI_INTERFACE.*disconnect" | wc -l)
+            if [ "$RECENT_DISCONNECTS" -gt 3 ]; then
+                echo -e "${YELLOW}[WARN]${NC} $RECENT_DISCONNECTS WiFi disconnects in last hour"
+                ((SOFT_COUNT++))
+            fi
+        else
+            echo -e "${YELLOW}[WARN]${NC} WiFi interface $WIFI_INTERFACE is down"
+            ((SOFT_COUNT++))
+        fi
+    else
+        echo "No wireless interface detected (might be wired connection)"
+    fi
+    echo ""
+
+    #
+    # 7b. BATTERY STATUS CHECK
+    #
+    echo "[CHECK] Battery status..."
+
+    # Check for battery using upower or /sys/class/power_supply
+    if command -v upower &> /dev/null; then
+        BATTERY_PATH=$(upower -e | grep battery | head -1)
+        if [ -n "$BATTERY_PATH" ]; then
+            BATTERY_PERCENT=$(upower -i "$BATTERY_PATH" | grep percentage | awk '{print $2}' | sed 's/%//')
+            BATTERY_STATE=$(upower -i "$BATTERY_PATH" | grep state | awk '{print $2}')
+            BATTERY_HEALTH=$(upower -i "$BATTERY_PATH" | grep capacity | awk '{print $2}' | sed 's/%//')
+
+            echo "Battery: ${BATTERY_PERCENT}% ($BATTERY_STATE)"
+
+            if [ -n "$BATTERY_HEALTH" ]; then
+                echo "Battery health: ${BATTERY_HEALTH}%"
+                if [ "$BATTERY_HEALTH" -lt 70 ]; then
+                    echo -e "${YELLOW}[WARN]${NC} Battery health degraded (${BATTERY_HEALTH}%)"
+                    ((SOFT_COUNT++))
+                fi
+            fi
+
+            # Warn if battery is low and discharging
+            if [ "$BATTERY_STATE" = "discharging" ] && [ "$BATTERY_PERCENT" -lt 20 ]; then
+                echo -e "${YELLOW}[WARN]${NC} Battery low (${BATTERY_PERCENT}%) and discharging"
+                ((SOFT_COUNT++))
+            elif [ "$BATTERY_STATE" = "discharging" ] && [ "$BATTERY_PERCENT" -lt 10 ]; then
+                echo -e "${RED}[FATAL]${NC} Battery critical (${BATTERY_PERCENT}%)"
+                ((FATAL_COUNT++))
+            else
+                echo -e "${GREEN}[OK]${NC} Battery status healthy"
+            fi
+        else
+            echo "No battery detected (desktop or AC-only)"
+        fi
+    elif [ -d "/sys/class/power_supply/BAT0" ]; then
+        BATTERY_PERCENT=$(cat /sys/class/power_supply/BAT0/capacity 2>/dev/null || echo "unknown")
+        BATTERY_STATUS=$(cat /sys/class/power_supply/BAT0/status 2>/dev/null || echo "unknown")
+
+        echo "Battery: ${BATTERY_PERCENT}% ($BATTERY_STATUS)"
+
+        if [ "$BATTERY_STATUS" = "Discharging" ] && [ "$BATTERY_PERCENT" != "unknown" ] && [ "$BATTERY_PERCENT" -lt 20 ]; then
+            echo -e "${YELLOW}[WARN]${NC} Battery low (${BATTERY_PERCENT}%) and discharging"
+            ((SOFT_COUNT++))
+        else
+            echo -e "${GREEN}[OK]${NC} Battery status healthy"
+        fi
+    else
+        echo "No battery detected (desktop or AC-only)"
+    fi
+    echo ""
+
+    #
+    # 7c. SYSTEM JOURNAL ERROR SCAN (LAPTOP)
+    #
+    echo "[CHECK] System journal errors (last 24 hours)..."
+
+    # Scan journal for network, hardware, and driver errors
+    if command -v journalctl &> /dev/null; then
+        TEMP_JOURNAL_ERRORS=$(mktemp)
+        trap "rm -f $TEMP_JOURNAL_ERRORS" EXIT
+
+        # Collect errors from last 24 hours
+        journalctl --no-pager -p err -b --since "24 hours ago" 2>/dev/null | \
+            grep -iE "(network|wifi|ethernet|firmware|driver|usb|hardware|nvme|disk|thermal)" | \
+            grep -viE "(audit|apparmor|segfault)" | \
+            tail -20 > "$TEMP_JOURNAL_ERRORS"
+
+        if [ -s "$TEMP_JOURNAL_ERRORS" ]; then
+            ERROR_COUNT=$(wc -l < "$TEMP_JOURNAL_ERRORS")
+            echo -e "${YELLOW}[WARN]${NC} Found $ERROR_COUNT hardware/network error(s) in journal:"
+            echo ""
+            head -10 "$TEMP_JOURNAL_ERRORS" | while read -r line; do
+                # Truncate long lines
+                TRUNCATED=$(echo "$line" | cut -c1-120)
+                echo "  $TRUNCATED"
+            done
+            if [ "$ERROR_COUNT" -gt 10 ]; then
+                echo "  ... and $((ERROR_COUNT - 10)) more errors"
+            fi
+            echo ""
+            echo "  Run 'journalctl -p err -b --since \"24 hours ago\"' for full details"
+            ((SOFT_COUNT++))
+        else
+            echo -e "${GREEN}[OK]${NC} No hardware/network errors in journal"
+        fi
+    else
+        echo -e "${YELLOW}[WARN]${NC} journalctl not available"
+    fi
+    echo ""
+fi
+
+#
+# 8. SYSTEM UPTIME
 #
 echo "[CHECK] System uptime..."
 UPTIME_DAYS=$(uptime | awk '{print $3}' | sed 's/,//')
@@ -246,7 +430,7 @@ echo -e "${GREEN}[OK]${NC} System uptime check complete"
 echo ""
 
 #
-# 8. DOCKER SYSTEM RESOURCE CHECK
+# 9. DOCKER SYSTEM RESOURCE CHECK
 #
 if command -v docker &> /dev/null && systemctl is-active --quiet docker; then
     echo "[CHECK] Docker system resources..."
@@ -272,7 +456,7 @@ fi
 echo ""
 
 #
-# 9. CONTAINER LOG ERROR ANALYSIS
+# 10. CONTAINER LOG ERROR ANALYSIS
 #
 echo "[CHECK] Recent container log errors..."
 
