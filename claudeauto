@@ -1,0 +1,10 @@
+#!/bin/bash
+# claudeauto - Launch Claude for a project
+# Usage: claudeauto <project-name>
+
+PROJECT="$1"
+[ -z "$PROJECT" ] && echo "Usage: claudeauto <project>" && exit 1
+[ ! -d "$HOME/projects/$PROJECT" ] && echo "Project not found: $PROJECT" && exit 1
+
+cd "$HOME/projects/$PROJECT"
+claude

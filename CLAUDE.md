@@ -31,6 +31,7 @@ devscripts/
 │   ├── updatelinux.sh               # System update automation
 │   └── cleanup                      # Legacy Docker container cleanup
 ├── Claude Code Management Scripts
+│   ├── claudeauto                   # Sandboxed autonomous mode launcher (NEW)
 │   ├── claude-push                  # Push Claude config to GitLab
 │   ├── claude-pull                  # Pull Claude config from GitLab
 │   ├── claude-session               # Manage Claude session storage
@@ -492,3 +493,22 @@ esac
   - Categorized all 27+ scripts by function
   - Documented purpose, usage, and key features for each script
   - File sizes and types included
+
+### Session: 2025-12-07
+- **Created claudeauto - Sandboxed Autonomous Mode Launcher**
+  - Launches Claude Code in a specific project with OS-level sandboxing
+  - Uses bubblewrap (bwrap) for filesystem isolation
+  - **Write access**: Project directory only + `/mnt/shared/aichat/` (inter-AI handoff)
+  - **Read access**: System libs, `~/.claude`, `~/secrets`, `~/projects/CLAUDE.md`
+  - Runs with `--dangerously-skip-permissions` inside the sandbox
+  - Hardcoded prompt instructs Claude about sandbox limitations
+  - If changes needed outside project, writes handoff to shared folder
+  - Usage: `claudeauto <project-name>` (e.g., `claudeauto nginx`)
+
+- **Inter-AI Communication Protocol Design**
+  - Design document: `/home/administrator/projects/AINotes/interai.md`
+  - Commands: `/cread` (check inbox), `/cwrite` (send message)
+  - Shared definitions at `/mnt/shared/aichat/definitions/`
+  - Supports Claude Code, Gemini CLI, and Codex CLI
+  - Agent registry: server.admin, server.dev, laptop.dev, gemini, codex
+  - Status: Design complete, implementation pending
