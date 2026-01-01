@@ -1,10 +1,20 @@
 #!/bin/bash
-# claudeauto - Launch Claude for a project
-# Usage: claudeauto <project-name>
+# claudeauto - Launch Claude in autopilot mode for a project
+# Usage: claudeauto <project-name> [initial-prompt]
+#
+# Autopilot mode:
+#   --allowedTools: Pre-approve common tools to reduce permission prompts
+#   Prompt passed as positional argument for interactive mode
 
 PROJECT="$1"
-[ -z "$PROJECT" ] && echo "Usage: claudeauto <project>" && exit 1
+PROMPT="${2:-Check WIP.md for current status and continue working on pending tasks.}"
+
+[ -z "$PROJECT" ] && echo "Usage: claudeauto <project> [prompt]" && exit 1
 [ ! -d "$HOME/projects/$PROJECT" ] && echo "Project not found: $PROJECT" && exit 1
 
 cd "$HOME/projects/$PROJECT"
-claude
+
+# Launch Claude with autopilot settings (interactive mode with pre-approved tools)
+claude \
+  --allowedTools "Read,Write,Edit,Glob,Grep,Bash(git*),Bash(docker*),Bash(curl*),Bash(python*),Bash(source*),WebFetch,WebSearch,Task,TodoWrite" \
+  "$PROMPT"
