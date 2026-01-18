@@ -196,22 +196,60 @@ pull_single_project() {
 if [[ "${PROJECT}" == "all" ]]; then
   echo "🔄 Processing all Git repositories in ${BASE_DIR}..."
   echo ""
-  
+
+  # Initialize tracking arrays
+  declare -a SUCCESS_PROJECTS=()
+  declare -a FAILED_PROJECTS=()
+  declare -a SKIPPED_PROJECTS=()
+  declare -A FAILURE_REASONS=()
+
   # Find all directories with .git subdirectory
   for dir in "${BASE_DIR}"/*/; do
     if [[ -d "${dir}/.git" ]]; then
       repo_name=$(basename "${dir}")
+
+      # Skip directories with .nogit marker file
+      if [[ -f "${dir}/.nogit" ]]; then
+        echo "⚠️  Skipping '${repo_name}' (has .nogit marker - excluded from git)"
+        SKIPPED_PROJECTS+=("${repo_name}")
+        continue
+      fi
+
       echo "════════════════════════════════════════════════════════════"
       echo "📍 Processing: ${dir}"
       echo "════════════════════════════════════════════════════════════"
-      
-      # Call function for each repo
-      pull_single_project "${repo_name}" || {
-        echo "⚠️  Failed to process ${repo_name}, continuing with next..."
-      }
-      
+
+      # Capture output and exit code
+      OUTPUT=$(pull_single_project "${repo_name}" 2>&1)
+      EXIT_CODE=$?
+
+      # Print the output
+      echo "$OUTPUT"
+
+      # Track success or failure
+      if [[ $EXIT_CODE -eq 0 ]] && ! echo "$OUTPUT" | grep -qi "could not\|failed"; then
+        SUCCESS_PROJECTS+=("${repo_name}")
+      else
+        FAILED_PROJECTS+=("${repo_name}")
+
+        # Determine failure reason from output
+        if echo "$OUTPUT" | grep -qi "timeout"; then
+          FAILURE_REASONS["${repo_name}"]="network/timeout"
+        elif echo "$OUTPUT" | grep -qi "permission denied\|authentication"; then
+          FAILURE_REASONS["${repo_name}"]="authentication failed"
+        elif echo "$OUTPUT" | grep -qi "could not fetch"; then
+          FAILURE_REASONS["${repo_name}"]="fetch failed"
+        elif echo "$OUTPUT" | grep -qi "could not clone"; then
+          FAILURE_REASONS["${repo_name}"]="clone failed"
+        elif echo "$OUTPUT" | grep -qi "does not exist"; then
+          FAILURE_REASONS["${repo_name}"]="repo not found"
+        else
+          FAILURE_REASONS["${repo_name}"]="unknown error"
+        fi
+      fi
+
       echo ""
-      
+
       # Small delay between repos to avoid overwhelming GitHub
       if [[ -d "${BASE_DIR}"/*/.git ]]; then
         echo "   ⏸️  Pausing 2 seconds before next repository..."
@@ -219,8 +257,33 @@ if [[ "${PROJECT}" == "all" ]]; then
       fi
     fi
   done
-  
-  echo "✅ All repositories processed!"
+
+  # Print summary
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo "📊 PULL SUMMARY"
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+  echo "✅ Successful: ${#SUCCESS_PROJECTS[@]} projects"
+  echo "❌ Failed: ${#FAILED_PROJECTS[@]} projects"
+  echo "⏭️  Skipped: ${#SKIPPED_PROJECTS[@]} projects"
+  echo ""
+
+  # List failed projects with reasons
+  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]]; then
+    echo "Failed Projects:"
+    echo "────────────────────────────────────────────────────────────────"
+    for project in "${FAILED_PROJECTS[@]}"; do
+      reason="${FAILURE_REASONS[$project]}"
+      printf "  ❌ %-30s → %s\n" "${project}" "${reason}"
+    done
+    echo ""
+    exit 1
+  else
+    echo "All repositories pulled successfully!"
+    echo ""
+  fi
+
   exit 0
 fi
 

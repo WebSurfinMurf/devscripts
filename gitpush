@@ -360,6 +360,7 @@ if [[ "${PROJECT}" == "all" ]]; then
   # Initialize tracking arrays
   declare -a SUCCESS_PROJECTS=()
   declare -a FAILED_PROJECTS=()
+  declare -a SKIPPED_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
   # Find all directories with .git subdirectory
@@ -370,6 +371,7 @@ if [[ "${PROJECT}" == "all" ]]; then
       # Skip directories with .nogit marker file
       if [[ -f "${dir}/.nogit" ]]; then
         echo "⚠️  Skipping '${repo_name}' (has .nogit marker - excluded from git)"
+        SKIPPED_PROJECTS+=("${repo_name}")
         continue
       fi
 
@@ -428,6 +430,7 @@ if [[ "${PROJECT}" == "all" ]]; then
   echo ""
   echo "✅ Successful: ${#SUCCESS_PROJECTS[@]} projects"
   echo "❌ Failed: ${#FAILED_PROJECTS[@]} projects"
+  echo "⏭️  Skipped: ${#SKIPPED_PROJECTS[@]} projects"
   echo ""
 
   # List failed projects with reasons

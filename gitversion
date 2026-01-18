@@ -262,29 +262,66 @@ version_single_project() {
 if [[ "${PROJECT}" == "all" ]]; then
   echo "🔄 Processing all Git repositories in ${BASE_DIR}..."
   echo ""
-  
+
+  # Initialize tracking arrays
+  declare -a SUCCESS_PROJECTS=()
+  declare -a FAILED_PROJECTS=()
+  declare -a SKIPPED_PROJECTS=()
+  declare -A FAILURE_REASONS=()
+  declare -A VERSION_TAGS=()
+
   # Find all directories with .git subdirectory
   for dir in "${BASE_DIR}"/*/; do
     if [[ -d "${dir}/.git" ]]; then
       repo_name=$(basename "${dir}")
-      
+
       # Skip directories with .nogit marker file
       if [[ -f "${dir}/.nogit" ]]; then
         echo "⚠️  Skipping '${repo_name}' (has .nogit marker - excluded from git)"
+        SKIPPED_PROJECTS+=("${repo_name}")
         continue
       fi
-      
+
       echo "════════════════════════════════════════════════════════════"
       echo "📍 Processing: ${dir}"
       echo "════════════════════════════════════════════════════════════"
-      
-      # Call function for each repo
-      version_single_project "${repo_name}" "${MODE}" "${DESC}" || {
-        echo "⚠️  Failed to version ${repo_name}, continuing with next..."
-      }
-      
+
+      # Capture output and exit code
+      OUTPUT=$(version_single_project "${repo_name}" "${MODE}" "${DESC}" 2>&1)
+      EXIT_CODE=$?
+
+      # Print the output
+      echo "$OUTPUT"
+
+      # Track success or failure
+      if [[ $EXIT_CODE -eq 0 ]]; then
+        SUCCESS_PROJECTS+=("${repo_name}")
+        # Extract the version tag from output
+        TAG=$(echo "$OUTPUT" | grep -oP "Created annotated tag '\K[^']+")
+        if [[ -n "$TAG" ]]; then
+          VERSION_TAGS["${repo_name}"]="$TAG"
+        fi
+      else
+        FAILED_PROJECTS+=("${repo_name}")
+
+        # Determine failure reason from output
+        if echo "$OUTPUT" | grep -qi "not a git repository"; then
+          FAILURE_REASONS["${repo_name}"]="not a git repo"
+        elif echo "$OUTPUT" | grep -qi "does not exist"; then
+          FAILURE_REASONS["${repo_name}"]="directory not found"
+        elif echo "$OUTPUT" | grep -qi "fetch\|timeout"; then
+          FAILURE_REASONS["${repo_name}"]="network/timeout"
+        elif echo "$OUTPUT" | grep -qi "permission denied\|authentication"; then
+          FAILURE_REASONS["${repo_name}"]="authentication failed"
+        elif echo "$OUTPUT" | grep -qi "could not switch"; then
+          FAILURE_REASONS["${repo_name}"]="branch switch failed"
+        else
+          FAILURE_REASONS["${repo_name}"]="unknown error"
+        fi
+      fi
+
       echo ""
-      
+
       # Small delay between repos to avoid overwhelming GitHub
       if [[ -d "${BASE_DIR}"/*/.git ]]; then
         echo "   ⏸️  Pausing 2 seconds before next repository..."
@@ -292,8 +329,44 @@ if [[ "${PROJECT}" == "all" ]]; then
       fi
     fi
   done
-  
-  echo "✅ All repositories processed!"
+
+  # Print summary
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo "📊 VERSION SUMMARY"
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+  echo "✅ Successful: ${#SUCCESS_PROJECTS[@]} projects"
+  echo "❌ Failed: ${#FAILED_PROJECTS[@]} projects"
+  echo "⏭️  Skipped: ${#SKIPPED_PROJECTS[@]} projects"
+  echo ""
+
+  # List successful projects with their tags
+  if [[ ${#SUCCESS_PROJECTS[@]} -gt 0 ]]; then
+    echo "Versioned Projects:"
+    echo "────────────────────────────────────────────────────────────────"
+    for project in "${SUCCESS_PROJECTS[@]}"; do
+      tag="${VERSION_TAGS[$project]:-unknown}"
+      printf "  ✅ %-30s → %s\n" "${project}" "${tag}"
+    done
+    echo ""
+  fi
+
+  # List failed projects with reasons
+  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]]; then
+    echo "Failed Projects:"
+    echo "────────────────────────────────────────────────────────────────"
+    for project in "${FAILED_PROJECTS[@]}"; do
+      reason="${FAILURE_REASONS[$project]}"
+      printf "  ❌ %-30s → %s\n" "${project}" "${reason}"
+    done
+    echo ""
+    exit 1
+  else
+    echo "All repositories versioned successfully!"
+    echo ""
+  fi
+
   exit 0
 fi
 

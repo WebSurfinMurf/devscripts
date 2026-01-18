@@ -1,6 +1,6 @@
 # Claude AI Assistant Notes
 
-> **For overall environment context, see: `/home/claude/workspace/AINotes/AINotes.md`**
+> **For overall environment context, see: `/home/claude/workspace/ainotes/ainotes.md`**
 
 ## Project Overview
 Development helper scripts for managing GitHub repositories, version control, backups, and system maintenance.
@@ -274,13 +274,13 @@ _This section is updated by Claude during each session_
   - Scripts now auto-detect `gitsyncfirst.sh` in project root
   - Executes BEFORE push/version (syncs dependencies TO repo)
   - Executes AFTER pull/clone (restores dependencies FROM repo)
-  - Example use case: claude-code-config syncs ~/.claude and ~/projects/.claude
+  - Example use case: claudecodeconfig syncs ~/.claude and ~/projects/.claude
   - **REPLACES claude-push/claude-pull scripts** - unified workflow now
 - **Updated all three git scripts:**
   - gitpush: Runs gitsyncfirst.sh "push" before git operations
   - gitpull: Runs gitsyncfirst.sh "pull" after successful pull/clone
   - gitversion: Runs gitsyncfirst.sh "version" before tagging
-- **Created gitsyncfirst.sh for claude-code-config:**
+- **Created gitsyncfirst.sh for claudecodeconfig:**
   - Syncs $HOME/.claude → home/
   - Syncs $HOME/projects/.claude → infrastructure/
   - Preserves .credentials.json during restore
@@ -321,7 +321,7 @@ cd ~/projects/myproject
 ./gitpull ProjectName
 
 # Pull from GitLab (NEW)
-./gitpull -gitlab claude-code-config
+./gitpull -gitlab claudecodeconfig
 
 # Pull current directory (NEW)
 cd ~/projects/myproject
@@ -372,7 +372,7 @@ Projects can include a `gitsyncfirst.sh` script in their root directory to sync 
 - **gitpull**: Executes `gitsyncfirst.sh "pull"` AFTER successful pull/clone
   - Use this to restore files/directories FROM the repository to system
 
-### Example: claude-code-config
+### Example: claudecodeconfig
 ```bash
 #!/usr/bin/env bash
 # gitsyncfirst.sh - Syncs Claude Code configuration
@@ -403,17 +403,17 @@ esac
 - Added comprehensive .gitignore file
 
 ### Session: 2025-08-17 (Session 3 Final)
-- Session storage relocated to AINotes/claude/ for organization
+- Session storage relocated to ainotes/claude/ for organization
 - All session management scripts updated with new paths
 - Ready for claude-code restart with proper context persistence
 
 ### Session: 2025-11-12
 - **Added `-gitlab` parameter to gitpull**
   - Allows explicit GitLab remote specification for new clones
-  - Usage: `gitpull -gitlab claude-code-config`
+  - Usage: `gitpull -gitlab claudecodeconfig`
   - Existing repos still auto-detect GitLab from remote URL
   - Solves first-time clone scenario where repo doesn't exist yet
-  - Example: On laptop run `gitpull -gitlab claude-code-config` to clone from GitLab
+  - Example: On laptop run `gitpull -gitlab claudecodeconfig` to clone from GitLab
 
 ### Session: 2025-11-15
 - **Created maintenance/ directory with log/data cleanup scripts**
@@ -506,7 +506,7 @@ esac
   - Usage: `claudeauto <project-name>` (e.g., `claudeauto nginx`)
 
 - **Inter-AI Communication Protocol Design**
-  - Design document: `/home/administrator/projects/AINotes/interai.md`
+  - Design document: `/home/administrator/projects/ainotes/interai.md`
   - Commands: `/cread` (check inbox), `/cwrite` (send message)
   - Shared definitions at `/mnt/shared/aichat/definitions/`
   - Supports Claude Code, Gemini CLI, and Codex CLI

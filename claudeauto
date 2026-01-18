@@ -1,20 +1,26 @@
 #!/bin/bash
-# claudeauto - Launch Claude in autopilot mode for a project
-# Usage: claudeauto <project-name> [initial-prompt]
+# claudeauto - Launch Claude in full auto mode
+# Usage: claudeauto [project-name] [initial-prompt]
 #
-# Autopilot mode:
-#   --allowedTools: Pre-approve common tools to reduce permission prompts
-#   Prompt passed as positional argument for interactive mode
+# Full auto mode:
+#   --dangerously-skip-permissions: Skip all permission prompts
+#   If no project specified, starts in ~/projects directory
+#
+# Examples:
+#   claudeauto                    # Start in projects dir, full auto
+#   claudeauto nginx              # Start in nginx project, full auto
+#   claudeauto nginx "fix bug"    # Start with specific prompt
 
 PROJECT="$1"
-PROMPT="${2:-Check WIP.md for current status and continue working on pending tasks.}"
+PROMPT="$2"
 
-[ -z "$PROJECT" ] && echo "Usage: claudeauto <project> [prompt]" && exit 1
-[ ! -d "$HOME/projects/$PROJECT" ] && echo "Project not found: $PROJECT" && exit 1
+# If no project specified, use projects directory
+if [ -z "$PROJECT" ]; then
+  cd "$HOME/projects"
+else
+  [ ! -d "$HOME/projects/$PROJECT" ] && echo "Project not found: $PROJECT" && exit 1
+  cd "$HOME/projects/$PROJECT"
+fi
 
-cd "$HOME/projects/$PROJECT"
-
-# Launch Claude with autopilot settings (interactive mode with pre-approved tools)
-claude \
-  --allowedTools "Read,Write,Edit,Glob,Grep,Bash(git*),Bash(docker*),Bash(curl*),Bash(python*),Bash(source*),WebFetch,WebSearch,Task,TodoWrite" \
-  "$PROMPT"
+# Launch Claude with full auto mode (no permission prompts)
+claude --dangerously-skip-permissions ${PROMPT:+"$PROMPT"}
