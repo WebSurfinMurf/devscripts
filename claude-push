@@ -4,7 +4,7 @@ set -euo pipefail
 # Usage: claude-push [commit-message]
 # Syncs Claude Code configuration to GitLab backup repository
 
-PROJECT="claude-code-config"
+PROJECT="claudecodeconfig"
 BASE_DIR="${HOME}/projects"
 REPO_DIR="${BASE_DIR}/${PROJECT}"
 GITLAB_URL="ssh://git@gitlab.ai-servicers.com:2222/administrators/${PROJECT}.git"

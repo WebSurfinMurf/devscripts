@@ -3,7 +3,7 @@ set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
 # Usage: gitpull [-gitlab] <project-name|all|.>
 # Example: gitpull MyNewApp
-#          gitpull -gitlab claude-code-config
+#          gitpull -gitlab claudecodeconfig
 #          gitpull all
 #          gitpull . (uses current directory)
 
@@ -21,7 +21,7 @@ if [ $# -ne 1 ]; then
   echo "  Use 'all' to pull all git repositories in projects directory"
   echo "  Use '.' to pull current directory"
   echo "Example: $0 MyNewApp"
-  echo "Example: $0 -gitlab claude-code-config"
+  echo "Example: $0 -gitlab claudecodeconfig"
   exit 1
 fi
 

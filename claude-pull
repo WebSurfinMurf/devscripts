@@ -4,7 +4,7 @@ set -euo pipefail
 # Usage: claude-pull
 # Pulls latest Claude Code configuration from GitLab and restores to local directories
 
-PROJECT="claude-code-config"
+PROJECT="claudecodeconfig"
 BASE_DIR="${HOME}/projects"
 REPO_DIR="${BASE_DIR}/${PROJECT}"
 GITLAB_URL="ssh://git@gitlab.ai-servicers.com:2222/administrators/${PROJECT}.git"
