@@ -1,0 +1,235 @@
+#!/bin/bash
+# clearbrowser - Clear OAuth2/session cookies to fix redirect loops
+#
+# Usage: clearbrowser [browser] [--dry-run]
+#   browser: brave, chrome, firefox, all (default: brave)
+#   --dry-run: Show what would be deleted without deleting
+#
+# Fixes: "too many redirects" errors after service restarts
+# Cause: Stale OAuth2 proxy or Keycloak session cookies
+
+set -euo pipefail
+
+# Configuration
+DOMAIN="ai-servicers.com"
+BROWSER="brave"
+DRY_RUN=false
+
+# Parse arguments
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run)
+            DRY_RUN=true
+            ;;
+        brave|chrome|firefox|all)
+            BROWSER="$arg"
+            ;;
+        -h|--help)
+            echo "Usage: clearbrowser [brave|chrome|firefox|all] [--dry-run]"
+            echo ""
+            echo "Clear OAuth2/session cookies to fix redirect loops."
+            echo ""
+            echo "Options:"
+            echo "  brave     Clear Brave browser cookies (default)"
+            echo "  chrome    Clear Chrome browser cookies"
+            echo "  firefox   Clear Firefox browser cookies"
+            echo "  all       Clear all browsers"
+            echo "  --dry-run Show what would be deleted without deleting"
+            exit 0
+            ;;
+    esac
+done
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# Browser paths (Linux)
+BRAVE_DIR="$HOME/.config/BraveSoftware/Brave-Browser/Default"
+CHROME_DIR="$HOME/.config/google-chrome/Default"
+FIREFOX_DIR="$HOME/.mozilla/firefox"
+
+echo -e "${YELLOW}════════════════════════════════════════════════════════════════${NC}"
+echo -e "${YELLOW}  Browser Cookie Cleaner for ${DOMAIN}${NC}"
+echo -e "${YELLOW}════════════════════════════════════════════════════════════════${NC}"
+echo ""
+
+if [[ "$DRY_RUN" == "true" ]]; then
+    echo -e "${BLUE}DRY RUN MODE - No files will be deleted${NC}"
+    echo ""
+fi
+
+# Function to clear Chromium-based browser (Brave/Chrome)
+clear_chromium() {
+    local name="$1"
+    local process="$2"
+    local dir="$3"
+
+    echo -e "${YELLOW}=== $name ===${NC}"
+
+    if [[ ! -d "$dir" ]]; then
+        echo "  Profile not found: $dir"
+        echo ""
+        return 0
+    fi
+
+    # Check if running
+    if pgrep -f "$process" > /dev/null 2>&1; then
+        echo -e "  ${RED}$name is running - killing...${NC}"
+        if [[ "$DRY_RUN" == "false" ]]; then
+            pkill -9 -f "$process" 2>/dev/null || true
+            sleep 2
+        else
+            echo "  [DRY RUN] Would kill $name processes"
+        fi
+    else
+        echo -e "  ${GREEN}$name not running${NC}"
+    fi
+
+    # Files to delete
+    local files=(
+        "$dir/Cookies"
+        "$dir/Cookies-journal"
+    )
+
+    # Also find and remove backup files
+    local backups=()
+    while IFS= read -r -d '' f; do
+        backups+=("$f")
+    done < <(find "$dir" -maxdepth 1 -name "Cookies.backup.*" -print0 2>/dev/null)
+
+    local deleted=0
+    local total_size=0
+
+    # Delete main cookie files
+    for f in "${files[@]}"; do
+        if [[ -f "$f" ]]; then
+            size=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            total_size=$((total_size + size))
+            if [[ "$DRY_RUN" == "false" ]]; then
+                rm -f "$f"
+                echo -e "  ${GREEN}Deleted:${NC} $(basename "$f") ($(numfmt --to=iec $size 2>/dev/null || echo "${size}B"))"
+            else
+                echo -e "  [DRY RUN] Would delete: $(basename "$f") ($(numfmt --to=iec $size 2>/dev/null || echo "${size}B"))"
+            fi
+            deleted=$((deleted + 1))
+        fi
+    done
+
+    # Delete backup files
+    for f in "${backups[@]}"; do
+        if [[ -f "$f" ]]; then
+            size=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            total_size=$((total_size + size))
+            if [[ "$DRY_RUN" == "false" ]]; then
+                rm -f "$f"
+                echo -e "  ${GREEN}Deleted:${NC} $(basename "$f") (backup)"
+            else
+                echo -e "  [DRY RUN] Would delete: $(basename "$f") (backup)"
+            fi
+            deleted=$((deleted + 1))
+        fi
+    done
+
+    if [[ $deleted -eq 0 ]]; then
+        echo "  No cookie files found"
+    else
+        echo -e "  ${GREEN}Cleared $deleted files ($(numfmt --to=iec $total_size 2>/dev/null || echo "${total_size}B"))${NC}"
+    fi
+
+    echo ""
+}
+
+# Function to clear Firefox
+clear_firefox() {
+    echo -e "${YELLOW}=== Firefox ===${NC}"
+
+    if [[ ! -d "$FIREFOX_DIR" ]]; then
+        echo "  Profile not found: $FIREFOX_DIR"
+        echo ""
+        return 0
+    fi
+
+    # Check if running
+    if pgrep -f "firefox" > /dev/null 2>&1; then
+        echo -e "  ${RED}Firefox is running - killing...${NC}"
+        if [[ "$DRY_RUN" == "false" ]]; then
+            pkill -9 -f "firefox" 2>/dev/null || true
+            sleep 2
+        else
+            echo "  [DRY RUN] Would kill Firefox processes"
+        fi
+    else
+        echo -e "  ${GREEN}Firefox not running${NC}"
+    fi
+
+    local deleted=0
+
+    # Find all cookies.sqlite in profile directories
+    while IFS= read -r f; do
+        if [[ -f "$f" ]]; then
+            size=$(stat -c%s "$f" 2>/dev/null || echo 0)
+            if [[ "$DRY_RUN" == "false" ]]; then
+                rm -f "$f"
+                echo -e "  ${GREEN}Deleted:${NC} $f"
+            else
+                echo -e "  [DRY RUN] Would delete: $f"
+            fi
+            deleted=$((deleted + 1))
+        fi
+    done < <(find "$FIREFOX_DIR" -name "cookies.sqlite" -type f 2>/dev/null)
+
+    if [[ $deleted -eq 0 ]]; then
+        echo "  No cookie files found"
+    else
+        echo -e "  ${GREEN}Cleared $deleted profile(s)${NC}"
+    fi
+
+    echo ""
+}
+
+# Main
+case "$BROWSER" in
+    brave)
+        clear_chromium "Brave" "brave" "$BRAVE_DIR"
+        ;;
+    chrome)
+        clear_chromium "Chrome" "chrome" "$CHROME_DIR"
+        ;;
+    firefox)
+        clear_firefox
+        ;;
+    all)
+        clear_chromium "Brave" "brave" "$BRAVE_DIR"
+        clear_chromium "Chrome" "chrome" "$CHROME_DIR"
+        clear_firefox
+        ;;
+    *)
+        echo -e "${RED}Unknown browser: $BROWSER${NC}"
+        echo ""
+        echo "Usage: clearbrowser [brave|chrome|firefox|all] [--dry-run]"
+        echo ""
+        echo "Examples:"
+        echo "  clearbrowser              # Clear Brave cookies"
+        echo "  clearbrowser chrome       # Clear Chrome cookies"
+        echo "  clearbrowser all          # Clear all browsers"
+        echo "  clearbrowser brave --dry-run  # Show what would be deleted"
+        exit 1
+        ;;
+esac
+
+echo -e "${GREEN}════════════════════════════════════════════════════════════════${NC}"
+if [[ "$DRY_RUN" == "false" ]]; then
+    echo -e "${GREEN}  Done! Cookies cleared.${NC}"
+    echo ""
+    echo "  Next steps:"
+    echo "  1. Open your browser"
+    echo "  2. Go to https://dashy.ai-servicers.com (or other service)"
+    echo "  3. Log in fresh when prompted"
+else
+    echo -e "${BLUE}  Dry run complete. Run without --dry-run to delete.${NC}"
+fi
+echo -e "${GREEN}════════════════════════════════════════════════════════════════${NC}"
