@@ -219,31 +219,41 @@ push_single_project() {
     if [[ "$SKIP_FETCH" != "true" ]]; then
       echo "⏬ Fetching latest changes..."
       FETCH_SUCCESS=false
+      FETCH_AUTH_FAILED=false
       RETRY_COUNT=0
       MAX_RETRIES=3
-      
-      while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ]; do
+
+      while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$FETCH_SUCCESS" = "false" ] && [ "$FETCH_AUTH_FAILED" = "false" ]; do
         if [ $RETRY_COUNT -gt 0 ]; then
           WAIT_TIME=$((RETRY_COUNT * 2))
           echo "   ↻ Retry $RETRY_COUNT/$MAX_RETRIES after ${WAIT_TIME}s delay..."
           sleep $WAIT_TIME
         fi
-        
-        timeout 7 git fetch origin --tags 2>&1
+
+        FETCH_OUTPUT=$(timeout 7 git fetch origin --tags 2>&1)
         FETCH_EXIT=$?
-        
-        if [ $FETCH_EXIT -eq 0 ]; then
+
+        # Check for credential/authentication failures (don't retry these)
+        if echo "$FETCH_OUTPUT" | grep -qiE "permission denied|could not read from remote|authentication failed|invalid credentials|fatal: could not read Username|terminal prompts disabled"; then
+          echo "   🔐 Authentication/credentials required but not available"
+          echo "$FETCH_OUTPUT" | head -3
+          FETCH_AUTH_FAILED=true
+        elif [ $FETCH_EXIT -eq 0 ]; then
           FETCH_SUCCESS=true
         elif [ $FETCH_EXIT -eq 124 ]; then
           echo "   ⏱️  Attempt $((RETRY_COUNT + 1)) timed out after 7 seconds"
         else
           echo "   ⚠️  Attempt $((RETRY_COUNT + 1)) failed (exit code: $FETCH_EXIT)"
+          echo "$FETCH_OUTPUT" | head -2
         fi
-        
+
         RETRY_COUNT=$((RETRY_COUNT + 1))
       done
-      
-      if [ "$FETCH_SUCCESS" = "false" ]; then
+
+      if [ "$FETCH_AUTH_FAILED" = "true" ]; then
+        echo "❌ CREDENTIALS REQUIRED - cannot push ${project_name}"
+        return 2  # Special exit code for auth failures
+      elif [ "$FETCH_SUCCESS" = "false" ]; then
         echo "⚠️  Fetch failed after $MAX_RETRIES attempts. Possible causes:"
         echo "    - Network connectivity issues"
         echo "    - SSH key authentication hanging"
@@ -361,6 +371,7 @@ if [[ "${PROJECT}" == "all" ]]; then
   declare -a SUCCESS_PROJECTS=()
   declare -a FAILED_PROJECTS=()
   declare -a SKIPPED_PROJECTS=()
+  declare -a AUTH_FAILED_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
   # Find all directories with .git subdirectory
@@ -387,7 +398,11 @@ if [[ "${PROJECT}" == "all" ]]; then
       echo "$OUTPUT"
 
       # Track success or failure
-      if [[ $EXIT_CODE -eq 0 ]]; then
+      if [[ $EXIT_CODE -eq 2 ]] || echo "$OUTPUT" | grep -qi "CREDENTIALS REQUIRED"; then
+        # Auth failure - tracked separately
+        AUTH_FAILED_PROJECTS+=("${repo_name}")
+        FAILURE_REASONS["${repo_name}"]="credentials required"
+      elif [[ $EXIT_CODE -eq 0 ]]; then
         SUCCESS_PROJECTS+=("${repo_name}")
       else
         FAILED_PROJECTS+=("${repo_name}")
@@ -430,8 +445,19 @@ if [[ "${PROJECT}" == "all" ]]; then
   echo ""
   echo "✅ Successful: ${#SUCCESS_PROJECTS[@]} projects"
   echo "❌ Failed: ${#FAILED_PROJECTS[@]} projects"
+  echo "🔐 Auth Required: ${#AUTH_FAILED_PROJECTS[@]} projects"
   echo "⏭️  Skipped: ${#SKIPPED_PROJECTS[@]} projects"
   echo ""
+
+  # List auth-failed projects
+  if [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]]; then
+    echo "Credentials Required (no SSH key or access):"
+    echo "────────────────────────────────────────────────────────────────"
+    for project in "${AUTH_FAILED_PROJECTS[@]}"; do
+      printf "  🔐 %-30s → %s\n" "${project}" "credentials required"
+    done
+    echo ""
+  fi
 
   # List failed projects with reasons
   if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]]; then
@@ -442,6 +468,9 @@ if [[ "${PROJECT}" == "all" ]]; then
       printf "  ❌ %-30s → %s\n" "${project}" "${reason}"
     done
     echo ""
+  fi
+
+  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]] || [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]]; then
     exit 1
   else
     echo "All repositories pushed successfully!"
