@@ -494,6 +494,33 @@ esac
   - Documented purpose, usage, and key features for each script
   - File sizes and types included
 
+### Session: 2026-01-30
+- **Claude Skills Reorganization**
+  - Skills and config now tracked in GitLab repos under `claude-skills/` group
+  - Three repos: `shared` (16 skills + common config), `administrators` (6 skills + admin config), `developers` (placeholder)
+  - `~/.claude/skills/` → cloned from `claude-skills/shared`
+  - `~/projects/.claude/skills/` → cloned from `claude-skills/administrators`
+  - **Removed claude-push/claude-pull scripts** - skills now use standard git workflow
+  - **Updated gitpush/gitpull** - removed `.claude` directory special handling
+  - **Created backup-claude-session.sh** - backs up non-git-tracked session data:
+    - `projects/`, `file-history/`, `todos/`, `history.jsonl`, `plans/`, `paste-cache/`
+  - **Cleaned up old artifacts**: `~/.claude/home/`, `~/.claude/infrastructure/`, `~/.claude/skills.bak.*`
+
+- **GitLab claude-skills Group Structure**
+  ```
+  gitlab.ai-servicers.com/claude-skills/
+  ├── shared/         # 16 skills + agents, commands, hooks, docs, tools
+  ├── administrators/ # 6 infra skills + architect, developer, security, qa agents
+  └── developers/     # Future developer-specific skills
+  ```
+
+- **Access Permissions (Project-Level)**
+  | Repo | administrators | developers |
+  |------|----------------|------------|
+  | shared | Read/Write | Read/Write |
+  | administrators | Read/Write | No access |
+  | developers | No access | Read/Write |
+
 ### Session: 2025-12-07
 - **Created claudeauto - Sandboxed Autonomous Mode Launcher**
   - Launches Claude Code in a specific project with OS-level sandboxing

@@ -24,12 +24,8 @@ if [[ "${PROJECT}" == "." ]]; then
   PROJECT="$(basename "${CURRENT_DIR}")"
   USE_CURRENT_DIR=true
 
-  # Special handling for .claude directories - redirect to claude-push
-  if [[ "${CURRENT_DIR}" == "${HOME}/.claude" ]] || [[ "${CURRENT_DIR}" == "${HOME}/projects/.claude" ]]; then
-    echo "🔧 Detected .claude directory - using claude-push instead"
-    echo ""
-    exec claude-push "$@"
-  fi
+  # Note: .claude directories now use standard git workflow
+  # Skills are tracked in claude-skills/shared and claude-skills/administrators repos
 
   echo "🔧 Using current directory: ${CURRENT_DIR}"
   echo "🔧 Detected project name: ${PROJECT}"
@@ -374,6 +370,42 @@ if [[ "${PROJECT}" == "all" ]]; then
   declare -a AUTH_FAILED_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
+  # === CLAUDE SKILLS REPOS (tracked separately) ===
+  CLAUDE_SKILLS_DIRS=(
+    "${HOME}/.claude/skills"
+    "${HOME}/projects/.claude/skills"
+  )
+
+  for skills_dir in "${CLAUDE_SKILLS_DIRS[@]}"; do
+    if [[ -d "${skills_dir}/.git" ]]; then
+      skills_name="claude-skills/$(basename $(dirname ${skills_dir}))"
+      [[ "${skills_dir}" == "${HOME}/.claude/skills" ]] && skills_name="claude-skills/shared"
+      [[ "${skills_dir}" == "${HOME}/projects/.claude/skills" ]] && skills_name="claude-skills/administrators"
+
+      echo "════════════════════════════════════════════════════════════"
+      echo "📍 Processing: ${skills_dir} (${skills_name})"
+      echo "════════════════════════════════════════════════════════════"
+
+      # Push claude-skills repo
+      OUTPUT=$(push_single_project "$(basename ${skills_dir})" "${DESC}" "${skills_dir}" 2>&1)
+      EXIT_CODE=$?
+
+      echo "$OUTPUT"
+
+      if [[ $EXIT_CODE -eq 0 ]]; then
+        SUCCESS_PROJECTS+=("${skills_name}")
+      else
+        FAILED_PROJECTS+=("${skills_name}")
+        FAILURE_REASONS["${skills_name}"]="push failed"
+      fi
+
+      echo ""
+      echo "   ⏸️  Pausing 2 seconds before next repository..."
+      sleep 2
+    fi
+  done
+
+  # === REGULAR PROJECT REPOS ===
   # Find all directories with .git subdirectory
   for dir in "${BASE_DIR}"/*/; do
     if [[ -d "${dir}/.git" ]]; then

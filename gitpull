@@ -34,12 +34,8 @@ if [[ "${PROJECT}" == "." ]]; then
   PROJECT="$(basename "${CURRENT_DIR}")"
   USE_CURRENT_DIR=true
 
-  # Special handling for .claude directories - redirect to claude-pull
-  if [[ "${CURRENT_DIR}" == "${HOME}/.claude" ]] || [[ "${CURRENT_DIR}" == "${HOME}/projects/.claude" ]]; then
-    echo "🔧 Detected .claude directory - using claude-pull instead"
-    echo ""
-    exec claude-pull
-  fi
+  # Note: .claude directories now use standard git workflow
+  # Skills are tracked in claude-skills/shared and claude-skills/administrators repos
 
   echo "🔧 Using current directory: ${CURRENT_DIR}"
   echo "🔧 Detected project name: ${PROJECT}"
@@ -215,7 +211,7 @@ pull_single_project() {
 
 # Handle 'all' parameter
 if [[ "${PROJECT}" == "all" ]]; then
-  echo "🔄 Processing all Git repositories in ${BASE_DIR}..."
+  echo "🔄 Processing all Git repositories..."
   echo ""
 
   # Initialize tracking arrays
@@ -224,6 +220,59 @@ if [[ "${PROJECT}" == "all" ]]; then
   declare -a SKIPPED_PROJECTS=()
   declare -a AUTH_FAILED_PROJECTS=()
   declare -A FAILURE_REASONS=()
+
+  # === CLAUDE SKILLS REPOS (tracked separately) ===
+  CLAUDE_SKILLS_DIRS=(
+    "${HOME}/.claude/skills"
+    "${HOME}/projects/.claude/skills"
+  )
+
+  for skills_dir in "${CLAUDE_SKILLS_DIRS[@]}"; do
+    if [[ -d "${skills_dir}/.git" ]]; then
+      # Determine display name
+      skills_name="claude-skills/unknown"
+      [[ "${skills_dir}" == "${HOME}/.claude/skills" ]] && skills_name="claude-skills/shared"
+      [[ "${skills_dir}" == "${HOME}/projects/.claude/skills" ]] && skills_name="claude-skills/administrators"
+
+      echo "════════════════════════════════════════════════════════════"
+      echo "📍 Processing: ${skills_dir} (${skills_name})"
+      echo "════════════════════════════════════════════════════════════"
+
+      # Capture output and exit code
+      OUTPUT=$(pull_single_project "skills" "${skills_dir}" 2>&1)
+      EXIT_CODE=$?
+
+      # Print the output
+      echo "$OUTPUT"
+
+      # Track success or failure
+      if [[ $EXIT_CODE -eq 2 ]] || echo "$OUTPUT" | grep -qi "CREDENTIALS REQUIRED"; then
+        AUTH_FAILED_PROJECTS+=("${skills_name}")
+        FAILURE_REASONS["${skills_name}"]="credentials required"
+      elif [[ $EXIT_CODE -eq 0 ]] && ! echo "$OUTPUT" | grep -qi "could not\|failed"; then
+        SUCCESS_PROJECTS+=("${skills_name}")
+      else
+        FAILED_PROJECTS+=("${skills_name}")
+        if echo "$OUTPUT" | grep -qi "timeout"; then
+          FAILURE_REASONS["${skills_name}"]="network/timeout"
+        elif echo "$OUTPUT" | grep -qi "permission denied\|authentication"; then
+          FAILURE_REASONS["${skills_name}"]="authentication failed"
+        elif echo "$OUTPUT" | grep -qi "could not fetch"; then
+          FAILURE_REASONS["${skills_name}"]="fetch failed"
+        else
+          FAILURE_REASONS["${skills_name}"]="unknown error"
+        fi
+      fi
+
+      echo ""
+      echo "   ⏸️  Pausing 2 seconds before next repository..."
+      sleep 2
+    fi
+  done
+
+  echo ""
+  echo "🔄 Processing project repositories in ${BASE_DIR}..."
+  echo ""
 
   # Find all directories with .git subdirectory
   for dir in "${BASE_DIR}"/*/; do
