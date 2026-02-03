@@ -462,10 +462,8 @@ if [[ "${PROJECT}" == "all" ]]; then
       echo ""
 
       # Small delay between repos to avoid overwhelming GitHub
-      if [[ -d "${BASE_DIR}"/*/.git ]]; then
-        echo "   ⏸️  Pausing 2 seconds before next repository..."
-        sleep 2
-      fi
+      echo "   ⏸️  Pausing 2 seconds before next repository..."
+      sleep 2
     fi
   done
 
