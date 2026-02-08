@@ -1,0 +1,356 @@
+#!/usr/bin/env bash
+# updateknowledge - Generate Claude Code customization summary
+# Scans all skills, commands, hooks, and agents and writes a summary to
+# ~/projects/ainotes/claudecustomized.md
+#
+# Usage:
+#   updateknowledge          # Generate if any source file is newer than output
+#   updateknowledge --force  # Always regenerate
+#
+# Designed to run from cron (daily) or manually via /cupdateknowledge command.
+
+set -euo pipefail
+
+HOME_CLAUDE="$HOME/.claude"
+PROJ_CLAUDE="$HOME/projects/.claude"
+OUTPUT="$HOME/projects/ainotes/claudecustomized.md"
+FORCE="${1:-}"
+
+# --- Check if regeneration needed ---
+if [ "$FORCE" != "--force" ] && [ -f "$OUTPUT" ]; then
+    NEWEST_SOURCE=0
+    while IFS= read -r -d '' f; do
+        mtime=$(stat -c %Y "$f" 2>/dev/null || echo 0)
+        [ "$mtime" -gt "$NEWEST_SOURCE" ] && NEWEST_SOURCE="$mtime"
+    done < <(find "$HOME_CLAUDE/skills" "$HOME_CLAUDE/commands" "$HOME_CLAUDE/hooks" "$HOME_CLAUDE/agents" \
+                   "$PROJ_CLAUDE/skills" "$PROJ_CLAUDE/commands" "$PROJ_CLAUDE/agents" \
+                   "$HOME_CLAUDE/settings.json" \
+                   -type f \( -name "*.md" -o -name "*.sh" -o -name "*.py" -o -name "*.json" \) \
+                   -print0 2>/dev/null)
+
+    OUTPUT_MTIME=$(stat -c %Y "$OUTPUT" 2>/dev/null || echo 0)
+    if [ "$NEWEST_SOURCE" -le "$OUTPUT_MTIME" ]; then
+        echo "No changes detected. Output is up to date."
+        exit 0
+    fi
+fi
+
+echo "Generating Claude Code customization summary..."
+
+# --- Helper: extract description from YAML frontmatter ---
+# Files use --- delimited frontmatter with a "description:" field
+extract_frontmatter_description() {
+    local file="$1"
+    python3 -c "
+import sys
+in_frontmatter = False
+desc_lines = []
+capturing = False
+with open('$file') as f:
+    for i, line in enumerate(f):
+        line = line.rstrip()
+        if i == 0 and line == '---':
+            in_frontmatter = True
+            continue
+        if in_frontmatter and line == '---':
+            break
+        if in_frontmatter and line.startswith('description:'):
+            desc = line[len('description:'):].strip()
+            if desc:
+                print(desc)
+            sys.exit(0)
+" 2>/dev/null
+}
+
+# --- Helper: extract skill description ---
+extract_skill_description() {
+    local dir="$1"
+    local desc=""
+
+    # Try SKILL.md first, then CLAUDE.md
+    for candidate in "$dir/SKILL.md" "$dir/CLAUDE.md"; do
+        [ -f "$candidate" ] || continue
+        desc=$(extract_frontmatter_description "$candidate")
+        [ -n "$desc" ] && echo "$desc" && return
+    done
+
+    # Fallback: first real paragraph after frontmatter and headers
+    for candidate in "$dir/SKILL.md" "$dir/CLAUDE.md" "$dir/README.md"; do
+        [ -f "$candidate" ] || continue
+        desc=$(awk '
+            BEGIN { in_fm=0 }
+            NR==1 && /^---$/ { in_fm=1; next }
+            in_fm && /^---$/ { in_fm=0; next }
+            in_fm { next }
+            /^#/ { next }
+            /^\s*$/ { if (found) exit; next }
+            { found=1; print }
+        ' "$candidate" | head -2 | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//')
+        [ -n "$desc" ] && echo "$desc" && return
+    done
+
+    echo "(no description found)"
+}
+
+# --- Helper: extract agent description from frontmatter ---
+extract_agent_description() {
+    local file="$1"
+    local desc=""
+    desc=$(extract_frontmatter_description "$file")
+    [ -n "$desc" ] && echo "$desc" && return
+
+    # Fallback: first paragraph after frontmatter and headers
+    desc=$(awk '
+        BEGIN { in_fm=0 }
+        NR==1 && /^---$/ { in_fm=1; next }
+        in_fm && /^---$/ { in_fm=0; next }
+        in_fm { next }
+        /^#/ { next }
+        /^\s*$/ { if (found) exit; next }
+        { found=1; print }
+    ' "$file" | head -2 | tr '\n' ' ' | sed 's/  */ /g; s/^ *//; s/ *$//')
+    [ -n "$desc" ] && echo "$desc" && return
+    echo "(no description found)"
+}
+
+# --- Helper: extract command description ---
+extract_command_description() {
+    local file="$1"
+    # Try frontmatter first
+    local desc=""
+    desc=$(extract_frontmatter_description "$file")
+    [ -n "$desc" ] && echo "$desc" && return
+
+    # Fallback: first non-empty, non-header, non-frontmatter line
+    desc=$(awk '
+        BEGIN { in_fm=0 }
+        NR==1 && /^---$/ { in_fm=1; next }
+        in_fm && /^---$/ { in_fm=0; next }
+        in_fm { next }
+        /^#/ { next }
+        /^\s*$/ { next }
+        { print; exit }
+    ' "$file" | sed 's/^ *//; s/ *$//')
+    [ -n "$desc" ] && echo "$desc" && return
+    echo "(no description)"
+}
+
+# --- Helper: extract hook info from settings.json ---
+extract_hooks_from_settings() {
+    local file="$1"
+    [ -f "$file" ] || return
+    python3 -c "
+import json
+with open('$file') as f:
+    data = json.load(f)
+hooks_config = data.get('hooks', {})
+for event_type, matcher_list in hooks_config.items():
+    if not isinstance(matcher_list, list):
+        continue
+    for entry in matcher_list:
+        matcher = entry.get('matcher', 'all')
+        inner_hooks = entry.get('hooks', [])
+        for h in inner_hooks:
+            cmd = h.get('command', '?')
+            timeout = h.get('timeout', 'default')
+            import os
+            print(f'{event_type}|{matcher}|{os.path.basename(cmd)}|{timeout}')
+" 2>/dev/null || true
+}
+
+# --- Begin output ---
+{
+    cat <<'HEADER'
+# Claude Code Customization Summary
+
+Auto-generated inventory of all skills, commands, hooks, and agents configured for Claude Code on this system.
+
+> **Auto-updated daily by cron** (or manually via `/cupdateknowledge`).
+> Source script: `~/projects/devscripts/updateknowledge`
+
+HEADER
+
+    echo "**Generated**: $(date '+%Y-%m-%d %H:%M:%S')"
+    echo ""
+    echo "---"
+    echo ""
+
+    # ===================== USER-LEVEL SKILLS =====================
+    echo "## User-Level Skills (\$HOME/.claude/skills/)"
+    echo ""
+    echo "| Skill | Description |"
+    echo "|-------|-------------|"
+
+    if [ -d "$HOME_CLAUDE/skills" ]; then
+        for skill_dir in "$HOME_CLAUDE/skills"/*/; do
+            [ -d "$skill_dir" ] || continue
+            skill_name=$(basename "$skill_dir")
+            case "$skill_name" in
+                commands|hooks|docs|tools|agents) continue ;;
+            esac
+            desc=$(extract_skill_description "$skill_dir")
+            [ ${#desc} -gt 200 ] && desc="${desc:0:200}..."
+            echo "| \`$skill_name\` | $desc |"
+        done
+    fi
+    echo ""
+
+    # ===================== PROJECT-LEVEL SKILLS =====================
+    echo "## Project-Level Skills (\$HOME/projects/.claude/skills/)"
+    echo ""
+    echo "| Skill | Description |"
+    echo "|-------|-------------|"
+
+    if [ -d "$PROJ_CLAUDE/skills" ]; then
+        for skill_dir in "$PROJ_CLAUDE/skills"/*/; do
+            [ -d "$skill_dir" ] || continue
+            skill_name=$(basename "$skill_dir")
+            case "$skill_name" in
+                commands|hooks|docs|tools|agents) continue ;;
+            esac
+            desc=$(extract_skill_description "$skill_dir")
+            [ ${#desc} -gt 200 ] && desc="${desc:0:200}..."
+            echo "| \`$skill_name\` | $desc |"
+        done
+    fi
+    echo ""
+
+    # ===================== USER-LEVEL COMMANDS =====================
+    echo "## User-Level Commands (\$HOME/.claude/commands/)"
+    echo ""
+    echo "| Command | Description |"
+    echo "|---------|-------------|"
+
+    if [ -d "$HOME_CLAUDE/commands" ]; then
+        for cmd_file in "$HOME_CLAUDE/commands"/*.md; do
+            [ -f "$cmd_file" ] || continue
+            cmd_name=$(basename "$cmd_file" .md)
+            desc=$(extract_command_description "$cmd_file")
+            [ ${#desc} -gt 200 ] && desc="${desc:0:200}..."
+            echo "| \`/$cmd_name\` | $desc |"
+        done
+    fi
+    echo ""
+
+    # ===================== PROJECT-LEVEL COMMANDS =====================
+    echo "## Project-Level Commands (\$HOME/projects/.claude/commands/)"
+    echo ""
+    echo "| Command | Description |"
+    echo "|---------|-------------|"
+
+    if [ -d "$PROJ_CLAUDE/commands" ]; then
+        for cmd_file in "$PROJ_CLAUDE/commands"/*.md; do
+            [ -f "$cmd_file" ] || continue
+            cmd_name=$(basename "$cmd_file" .md)
+            desc=$(extract_command_description "$cmd_file")
+            [ ${#desc} -gt 200 ] && desc="${desc:0:200}..."
+            echo "| \`/$cmd_name\` | $desc |"
+        done
+    fi
+    echo ""
+
+    # ===================== HOOKS =====================
+    echo "## Hooks"
+    echo ""
+
+    echo "### Tool Hooks (\$HOME/.claude/settings.json)"
+    echo ""
+    echo "| Event | Matcher | Script | Timeout |"
+    echo "|-------|---------|--------|---------|"
+
+    extract_hooks_from_settings "$HOME_CLAUDE/settings.json" | while IFS='|' read -r event matcher cmd timeout; do
+        echo "| \`$event\` | \`$matcher\` | \`$cmd\` | ${timeout}s |"
+    done
+    echo ""
+
+    echo "### Hook Scripts (\$HOME/.claude/hooks/)"
+    echo ""
+    echo "| Script | Type |"
+    echo "|--------|------|"
+
+    if [ -d "$HOME_CLAUDE/hooks" ]; then
+        for hook_file in "$HOME_CLAUDE/hooks"/*; do
+            [ -f "$hook_file" ] || continue
+            hook_name=$(basename "$hook_file")
+            case "$hook_name" in
+                pre-*) hook_type="PreToolUse" ;;
+                post-*) hook_type="PostToolUse" ;;
+                session-*) hook_type="Session Lifecycle" ;;
+                user-*) hook_type="User Prompt" ;;
+                stop*) hook_type="Stop" ;;
+                *validate*|*naming*|*nginx*|*gitlab*|*checklist*) hook_type="Validation" ;;
+                *) hook_type="Other" ;;
+            esac
+            echo "| \`$hook_name\` | $hook_type |"
+        done
+    fi
+    echo ""
+
+    # ===================== AGENTS =====================
+    echo "## User-Level Agents (\$HOME/.claude/agents/)"
+    echo ""
+    echo "| Agent | Description |"
+    echo "|-------|-------------|"
+
+    if [ -d "$HOME_CLAUDE/agents" ]; then
+        for agent_file in "$HOME_CLAUDE/agents"/*.md; do
+            [ -f "$agent_file" ] || continue
+            agent_name=$(basename "$agent_file" .md)
+            desc=$(extract_agent_description "$agent_file")
+            [ ${#desc} -gt 200 ] && desc="${desc:0:200}..."
+            echo "| \`$agent_name\` | $desc |"
+        done
+    fi
+    echo ""
+
+    echo "## Project-Level Agents (\$HOME/projects/.claude/agents/)"
+    echo ""
+    echo "| Agent | Description |"
+    echo "|-------|-------------|"
+
+    if [ -d "$PROJ_CLAUDE/agents" ]; then
+        for agent_file in "$PROJ_CLAUDE/agents"/*.md; do
+            [ -f "$agent_file" ] || continue
+            agent_name=$(basename "$agent_file" .md)
+            [[ "$agent_name" == *UPDATE* ]] && continue
+            desc=$(extract_agent_description "$agent_file")
+            [ ${#desc} -gt 200 ] && desc="${desc:0:200}..."
+            echo "| \`$agent_name\` | $desc |"
+        done
+    fi
+    echo ""
+
+    # ===================== TOTALS =====================
+    echo "---"
+    echo ""
+    echo "## Summary"
+    echo ""
+
+    user_skills=0; proj_skills=0; user_cmds=0; proj_cmds=0; hooks=0; user_agents=0; proj_agents=0
+    [ -d "$HOME_CLAUDE/skills" ] && user_skills=$(find "$HOME_CLAUDE/skills" -maxdepth 1 -mindepth 1 -type d ! -name commands ! -name hooks ! -name docs ! -name tools ! -name agents | wc -l)
+    [ -d "$PROJ_CLAUDE/skills" ] && proj_skills=$(find "$PROJ_CLAUDE/skills" -maxdepth 1 -mindepth 1 -type d ! -name commands ! -name hooks ! -name docs ! -name tools ! -name agents | wc -l)
+    [ -d "$HOME_CLAUDE/commands" ] && user_cmds=$(find "$HOME_CLAUDE/commands" -name "*.md" | wc -l)
+    [ -d "$PROJ_CLAUDE/commands" ] && proj_cmds=$(find "$PROJ_CLAUDE/commands" -name "*.md" | wc -l)
+    [ -d "$HOME_CLAUDE/hooks" ] && hooks=$(find "$HOME_CLAUDE/hooks" -type f | wc -l)
+    [ -d "$HOME_CLAUDE/agents" ] && user_agents=$(find "$HOME_CLAUDE/agents" -name "*.md" | wc -l)
+    [ -d "$PROJ_CLAUDE/agents" ] && proj_agents=$(find "$PROJ_CLAUDE/agents" -name "*.md" ! -name "*UPDATE*" | wc -l)
+
+    echo "| Category | Count |"
+    echo "|----------|-------|"
+    echo "| User-level skills | $user_skills |"
+    echo "| Project-level skills | $proj_skills |"
+    echo "| User-level commands | $user_cmds |"
+    echo "| Project-level commands | $proj_cmds |"
+    echo "| Hook scripts | $hooks |"
+    echo "| User-level agents | $user_agents |"
+    echo "| Project-level agents | $proj_agents |"
+    echo "| **Total** | **$(( user_skills + proj_skills + user_cmds + proj_cmds + hooks + user_agents + proj_agents ))** |"
+    echo ""
+    echo "---"
+    echo ""
+    echo "*Auto-generated by \`updateknowledge\` - do not edit manually*"
+
+} > "$OUTPUT"
+
+echo "Written to $OUTPUT"
+echo "$(wc -l < "$OUTPUT") lines generated."

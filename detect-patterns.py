@@ -18,7 +18,7 @@ class PatternDetector:
         self.project_name = self.project_path.name
         self.claude_md = self.project_path / "CLAUDE.md"
         self.compose_file = self.project_path / "docker-compose.yml"
-        self.secrets_file = Path(f"/home/administrator/secrets/{self.project_name}.env")
+        self.secrets_file = Path(f"/home/administrator/projects/secrets/{self.project_name}.env")
 
         self.patterns = {
             "oauth2": {"score": 0, "max": 10, "found": [], "missing": []},

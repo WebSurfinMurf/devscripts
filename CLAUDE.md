@@ -19,6 +19,9 @@ devscripts/
 │   ├── setup-docker-log-rotation.sh        # Docker daemon config (one-time)
 │   ├── README.md                           # Maintenance documentation
 │   └── logs/                               # Cleanup logs
+├── updatelibs/                      # External dependency update scripts
+│   ├── jeffallanupdate.sh           # Fetch Jeffallan/claude-skills subset
+│   └── updatemcpdocs.sh             # Generate MCP tools summary (mcptools.md)
 ├── .claude/                         # Claude Code command definitions
 ├── Git Management Scripts
 │   ├── gitinit                      # Initialize git repo on GitLab/GitHub

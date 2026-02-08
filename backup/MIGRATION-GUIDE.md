@@ -234,7 +234,7 @@ docker compose up -d
 docker ps | grep redis
 
 # Test connection (use password from secrets/redis.env)
-source /home/administrator/secrets/redis.env
+source /home/administrator/projects/secrets/redis.env
 docker exec redis redis-cli -a "$REDIS_PASSWORD" --no-auth-warning PING
 
 # Check data location

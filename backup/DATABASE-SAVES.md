@@ -415,7 +415,7 @@ docker exec postgres psql -U admin -c "CHECKPOINT;"
 **Redis:**
 ```bash
 # Check if password is correct
-grep REDIS_PASSWORD /home/administrator/secrets/redis.env
+grep REDIS_PASSWORD /home/administrator/projects/secrets/redis.env
 
 # Test connection
 docker exec redis redis-cli -a [password] PING

@@ -91,7 +91,7 @@ class ProjectHealthCheck:
     def check_configuration(self):
         """Check configuration files"""
         # Secrets file
-        secrets_file = Path(f"/home/administrator/secrets/{self.project_name}.env")
+        secrets_file = Path(f"/home/administrator/projects/secrets/{self.project_name}.env")
         if secrets_file.exists():
             self.checks_passed.append(f"Secrets file exists")
         else:

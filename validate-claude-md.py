@@ -152,7 +152,7 @@ class CLAUDEMDValidator:
                 self.errors.append("References deploy.sh but file not found")
 
         # Check secrets path format
-        secrets_refs = re.findall(r'/home/administrator/secrets/([^/\s]+)', self.content)
+        secrets_refs = re.findall(r'/home/administrator/projects/secrets/([^/\s]+)', self.content)
         if secrets_refs:
             for secret_file in secrets_refs:
                 if re.match(r'^[a-z0-9-]+\.env$', secret_file):
