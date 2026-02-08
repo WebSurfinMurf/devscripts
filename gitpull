@@ -239,8 +239,8 @@ if [[ "${PROJECT}" == "all" ]]; then
       echo "════════════════════════════════════════════════════════════"
 
       # Capture output and exit code
-      OUTPUT=$(pull_single_project "skills" "${skills_dir}" 2>&1)
-      EXIT_CODE=$?
+      EXIT_CODE=0
+      OUTPUT=$(pull_single_project "skills" "${skills_dir}" 2>&1) || EXIT_CODE=$?
 
       # Print the output
       echo "$OUTPUT"
@@ -291,8 +291,8 @@ if [[ "${PROJECT}" == "all" ]]; then
       echo "════════════════════════════════════════════════════════════"
 
       # Capture output and exit code
-      OUTPUT=$(pull_single_project "${repo_name}" 2>&1)
-      EXIT_CODE=$?
+      EXIT_CODE=0
+      OUTPUT=$(pull_single_project "${repo_name}" 2>&1) || EXIT_CODE=$?
 
       # Print the output
       echo "$OUTPUT"
@@ -377,12 +377,11 @@ if [[ "${PROJECT}" == "all" ]]; then
 fi
 
 # Single project pull
+EXIT_CODE=0
 if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
-  pull_single_project "${PROJECT}" "${CURRENT_DIR}"
-  EXIT_CODE=$?
+  pull_single_project "${PROJECT}" "${CURRENT_DIR}" || EXIT_CODE=$?
 else
-  pull_single_project "${PROJECT}"
-  EXIT_CODE=$?
+  pull_single_project "${PROJECT}" || EXIT_CODE=$?
 fi
 
 # Summary for single project

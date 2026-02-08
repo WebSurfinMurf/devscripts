@@ -309,8 +309,8 @@ if [[ "${PROJECT}" == "all" ]]; then
       echo "════════════════════════════════════════════════════════════"
 
       # Capture output and exit code
-      OUTPUT=$(version_single_project "skills" "${MODE}" "${DESC}" "${skills_dir}" 2>&1)
-      EXIT_CODE=$?
+      EXIT_CODE=0
+      OUTPUT=$(version_single_project "skills" "${MODE}" "${DESC}" "${skills_dir}" 2>&1) || EXIT_CODE=$?
 
       # Print the output
       echo "$OUTPUT"
@@ -364,8 +364,8 @@ if [[ "${PROJECT}" == "all" ]]; then
       echo "════════════════════════════════════════════════════════════"
 
       # Capture output and exit code
-      OUTPUT=$(version_single_project "${repo_name}" "${MODE}" "${DESC}" 2>&1)
-      EXIT_CODE=$?
+      EXIT_CODE=0
+      OUTPUT=$(version_single_project "${repo_name}" "${MODE}" "${DESC}" 2>&1) || EXIT_CODE=$?
 
       # Print the output
       echo "$OUTPUT"
@@ -466,12 +466,11 @@ if [[ "${PROJECT}" == "all" ]]; then
 fi
 
 # Single project version
+EXIT_CODE=0
 if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
-  version_single_project "${PROJECT}" "${MODE}" "${DESC}" "${CURRENT_DIR}"
-  EXIT_CODE=$?
+  version_single_project "${PROJECT}" "${MODE}" "${DESC}" "${CURRENT_DIR}" || EXIT_CODE=$?
 else
-  version_single_project "${PROJECT}" "${MODE}" "${DESC}"
-  EXIT_CODE=$?
+  version_single_project "${PROJECT}" "${MODE}" "${DESC}" || EXIT_CODE=$?
 fi
 
 # Summary for single project

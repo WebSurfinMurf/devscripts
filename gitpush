@@ -387,8 +387,8 @@ if [[ "${PROJECT}" == "all" ]]; then
       echo "════════════════════════════════════════════════════════════"
 
       # Push claude-skills repo
-      OUTPUT=$(push_single_project "$(basename ${skills_dir})" "${DESC}" "${skills_dir}" 2>&1)
-      EXIT_CODE=$?
+      EXIT_CODE=0
+      OUTPUT=$(push_single_project "$(basename ${skills_dir})" "${DESC}" "${skills_dir}" 2>&1) || EXIT_CODE=$?
 
       echo "$OUTPUT"
 
@@ -423,8 +423,8 @@ if [[ "${PROJECT}" == "all" ]]; then
       echo "════════════════════════════════════════════════════════════"
 
       # Capture output and exit code
-      OUTPUT=$(push_single_project "${repo_name}" "${DESC}" 2>&1)
-      EXIT_CODE=$?
+      EXIT_CODE=0
+      OUTPUT=$(push_single_project "${repo_name}" "${DESC}" 2>&1) || EXIT_CODE=$?
 
       # Print the output
       echo "$OUTPUT"
@@ -511,12 +511,11 @@ if [[ "${PROJECT}" == "all" ]]; then
 fi
 
 # Single project push
+EXIT_CODE=0
 if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
-  push_single_project "${PROJECT}" "${DESC}" "${CURRENT_DIR}"
-  EXIT_CODE=$?
+  push_single_project "${PROJECT}" "${DESC}" "${CURRENT_DIR}" || EXIT_CODE=$?
 else
-  push_single_project "${PROJECT}" "${DESC}"
-  EXIT_CODE=$?
+  push_single_project "${PROJECT}" "${DESC}" || EXIT_CODE=$?
 fi
 
 # Summary for single project
