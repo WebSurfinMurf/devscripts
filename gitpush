@@ -513,6 +513,23 @@ fi
 # Single project push
 if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
   push_single_project "${PROJECT}" "${DESC}" "${CURRENT_DIR}"
+  EXIT_CODE=$?
 else
   push_single_project "${PROJECT}" "${DESC}"
+  EXIT_CODE=$?
 fi
+
+# Summary for single project
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "📊 PUSH SUMMARY"
+echo "════════════════════════════════════════════════════════════════"
+if [[ $EXIT_CODE -eq 0 ]]; then
+  echo "  ✅ ${PROJECT} — pushed successfully"
+else
+  echo "  ❌ ${PROJECT} — push failed (exit code: ${EXIT_CODE})"
+fi
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+
+exit $EXIT_CODE

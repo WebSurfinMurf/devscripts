@@ -379,6 +379,23 @@ fi
 # Single project pull
 if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
   pull_single_project "${PROJECT}" "${CURRENT_DIR}"
+  EXIT_CODE=$?
 else
   pull_single_project "${PROJECT}"
+  EXIT_CODE=$?
 fi
+
+# Summary for single project
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "📊 PULL SUMMARY"
+echo "════════════════════════════════════════════════════════════════"
+if [[ $EXIT_CODE -eq 0 ]]; then
+  echo "  ✅ ${PROJECT} — pulled successfully"
+else
+  echo "  ❌ ${PROJECT} — pull failed (exit code: ${EXIT_CODE})"
+fi
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+
+exit $EXIT_CODE

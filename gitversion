@@ -468,6 +468,23 @@ fi
 # Single project version
 if [[ "${USE_CURRENT_DIR}" == "true" ]]; then
   version_single_project "${PROJECT}" "${MODE}" "${DESC}" "${CURRENT_DIR}"
+  EXIT_CODE=$?
 else
   version_single_project "${PROJECT}" "${MODE}" "${DESC}"
+  EXIT_CODE=$?
 fi
+
+# Summary for single project
+echo ""
+echo "════════════════════════════════════════════════════════════════"
+echo "📊 VERSION SUMMARY"
+echo "════════════════════════════════════════════════════════════════"
+if [[ $EXIT_CODE -eq 0 ]]; then
+  echo "  ✅ ${PROJECT} — versioned successfully"
+else
+  echo "  ❌ ${PROJECT} — version failed (exit code: ${EXIT_CODE})"
+fi
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+
+exit $EXIT_CODE
