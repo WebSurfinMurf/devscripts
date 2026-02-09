@@ -23,16 +23,7 @@ SKILLS=(
     spec-miner
     python-pro
     postgres-pro
-    architecture-designer
-    devops-engineer
-    sre-engineer
-    api-designer
-    code-reviewer
-    debugging-wizard
-    monitoring-expert
     typescript-pro
-    test-master
-    microservices-architect
 )
 
 # Commands to install
