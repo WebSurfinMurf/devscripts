@@ -400,8 +400,11 @@ if [[ "${PROJECT}" == "all" ]]; then
       fi
 
       echo ""
-      echo "   ⏸️  Pausing 2 seconds before next repository..."
-      sleep 2
+      # Only pause if we actually pushed something (avoid delay on no-change repos)
+      if echo "$OUTPUT" | grep -q "Pushing"; then
+        echo "   ⏸️  Pausing 2 seconds before next repository..."
+        sleep 2
+      fi
     fi
   done
 
@@ -461,9 +464,11 @@ if [[ "${PROJECT}" == "all" ]]; then
 
       echo ""
 
-      # Small delay between repos to avoid overwhelming GitHub
-      echo "   ⏸️  Pausing 2 seconds before next repository..."
-      sleep 2
+      # Only pause if we actually pushed something (avoid delay on no-change repos)
+      if echo "$OUTPUT" | grep -q "Pushing"; then
+        echo "   ⏸️  Pausing 2 seconds before next repository..."
+        sleep 2
+      fi
     fi
   done
 
