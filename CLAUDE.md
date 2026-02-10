@@ -528,7 +528,7 @@ esac
 - **Created claudeauto - Sandboxed Autonomous Mode Launcher**
   - Launches Claude Code in a specific project with OS-level sandboxing
   - Uses bubblewrap (bwrap) for filesystem isolation
-  - **Write access**: Project directory only + `/mnt/shared/aichat/` (inter-AI handoff)
+  - **Write access**: Project directory only (inter-AI file sharing now via MinIO aichat-files bucket)
   - **Read access**: System libs, `~/.claude`, `~/secrets`, `~/projects/CLAUDE.md`
   - Runs with `--dangerously-skip-permissions` inside the sandbox
   - Hardcoded prompt instructs Claude about sandbox limitations
@@ -538,7 +538,7 @@ esac
 - **Inter-AI Communication Protocol Design**
   - Design document: `/home/administrator/projects/ainotes/interai.md`
   - Commands: `/cread` (check inbox), `/cwrite` (send message)
-  - Shared definitions at `/mnt/shared/aichat/definitions/`
+  - File sharing now via MinIO `aichat-files` bucket (replaced `/mnt/shared/aichat/`)
   - Supports Claude Code, Gemini CLI, and Codex CLI
   - Agent registry: server.admin, server.dev, laptop.dev, gemini, codex
   - Status: Design complete, implementation pending
