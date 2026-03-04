@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+"""List Claude Code CLI sessions with summaries.
+
+Usage:
+    claude-sessions              # Interactive sessions, most recent first
+    claude-sessions -n 20        # Last 20 sessions
+    claude-sessions -p pipecat   # Filter by project path substring
+    claude-sessions --all        # Include agent auto-reply sessions
+    claude-sessions --long       # Show full summary (not truncated)
+    claude-sessions --csv        # CSV output
+    claude-sessions --json       # JSON output
+"""
+
+import argparse
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+CLAUDE_DIR = Path.home() / ".claude"
+PROJECTS_DIR = CLAUDE_DIR / "projects"
+
+# Patterns that indicate agent auto-reply sessions (not interactive)
+AGENT_AUTOREPLY_PATTERNS = [
+    r"^\[@\S+:ai-servicers\.com\]:",  # Any Matrix-originated message [@user:domain]:
+]
+AGENT_RE = re.compile("|".join(AGENT_AUTOREPLY_PATTERNS))
+
+TRIVIAL_SUMMARIES = {
+    "Claude Code CLI Session Closed",
+    "User Exits Claude Code CLI Session",
+    "User Exits Claude Code Session",
+    "User Exited Claude Code CLI Session",
+    "User Exited CLI Session",
+    "CLI Session Ended with Farewell Message",
+    "Exit Command Session",
+    "Session Ended with Exit Command",
+    "Session Clearing and Exit Commands",
+    "Unknown MVP Skill Error",
+}
+
+
+def parse_timestamp(ts_str):
+    """Parse ISO timestamp string to datetime."""
+    if not ts_str:
+        return None
+    try:
+        # Handle both Z suffix and +00:00
+        ts_str = ts_str.replace("Z", "+00:00")
+        return datetime.fromisoformat(ts_str)
+    except (ValueError, TypeError):
+        return None
+
+
+def extract_first_user_message(jsonl_path):
+    """Extract the first real user message from a JSONL transcript."""
+    try:
+        with open(jsonl_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if entry.get("type") != "user":
+                    continue
+
+                msg = entry.get("message", {})
+                content = msg.get("content", "")
+
+                # Extract text from content
+                text = ""
+                if isinstance(content, str):
+                    text = content
+                elif isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text = item.get("text", "")
+                            break
+
+                # Skip warmup/empty messages
+                text = text.strip()
+                if not text or text.lower() in ("warmup", "no prompt"):
+                    continue
+
+                # Strip system-reminder tags for display
+                text = re.sub(r"<system-reminder>.*?</system-reminder>", "", text, flags=re.DOTALL).strip()
+                if not text:
+                    continue
+
+                return text
+    except (OSError, IOError):
+        pass
+    return None
+
+
+def get_session_timestamp_from_jsonl(jsonl_path):
+    """Get session start timestamp from first JSONL entry."""
+    try:
+        with open(jsonl_path, "r") as f:
+            line = f.readline().strip()
+            if line:
+                entry = json.loads(line)
+                return entry.get("timestamp")
+    except (OSError, IOError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def get_message_count(jsonl_path):
+    """Count user+assistant messages in JSONL file."""
+    count = 0
+    try:
+        with open(jsonl_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if entry.get("type") in ("user", "assistant"):
+                        count += 1
+                except json.JSONDecodeError:
+                    continue
+    except (OSError, IOError):
+        pass
+    return count
+
+
+def get_project_from_dir(dir_key):
+    """Convert directory key back to project path."""
+    # -home-administrator-projects-pipecat -> /home/administrator/projects/pipecat
+    if dir_key.startswith("-"):
+        return dir_key.replace("-", "/", 1).replace("-", "/")
+    return dir_key
+
+
+def collect_sessions():
+    """Collect all sessions from index files and unindexed JSONL files."""
+    sessions = {}
+
+    if not PROJECTS_DIR.exists():
+        return sessions
+
+    # Pass 1: Read all sessions-index.json files
+    for index_path in PROJECTS_DIR.rglob("sessions-index.json"):
+        try:
+            with open(index_path) as f:
+                data = json.load(f)
+
+            dir_key = index_path.parent.name
+            project_path_default = get_project_from_dir(dir_key)
+
+            for entry in data.get("entries", []):
+                sid = entry.get("sessionId", "")
+                if not sid:
+                    continue
+
+                sessions[sid] = {
+                    "sessionId": sid,
+                    "created": entry.get("created", ""),
+                    "modified": entry.get("modified", ""),
+                    "summary": entry.get("summary", ""),
+                    "firstPrompt": entry.get("firstPrompt", ""),
+                    "messageCount": entry.get("messageCount", 0),
+                    "projectPath": entry.get("projectPath", project_path_default),
+                    "gitBranch": entry.get("gitBranch", ""),
+                    "source": "index",
+                    "fullPath": entry.get("fullPath", ""),
+                }
+        except (OSError, IOError, json.JSONDecodeError):
+            continue
+
+    # Pass 2: Find unindexed JSONL files (UUID format only, skip agent-* subagents)
+    import re
+    uuid_pattern = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$")
+
+    for proj_dir in PROJECTS_DIR.iterdir():
+        if not proj_dir.is_dir():
+            continue
+
+        dir_key = proj_dir.name
+        project_path = get_project_from_dir(dir_key)
+
+        for jsonl_file in proj_dir.glob("*.jsonl"):
+            if not uuid_pattern.match(jsonl_file.name):
+                continue
+
+            sid = jsonl_file.stem
+            if sid in sessions:
+                continue  # Already indexed
+
+            # Extract info from JSONL
+            ts = get_session_timestamp_from_jsonl(jsonl_file)
+            first_msg = extract_first_user_message(jsonl_file)
+
+            if not first_msg:
+                first_msg = "(no user message)"
+
+            # Fall back to file mtime if no timestamp in JSONL
+            if not ts:
+                try:
+                    mtime = jsonl_file.stat().st_mtime
+                    ts = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+                except OSError:
+                    pass
+
+            sessions[sid] = {
+                "sessionId": sid,
+                "created": ts or "",
+                "modified": ts or "",
+                "summary": "",  # No summary for unindexed
+                "firstPrompt": first_msg,
+                "messageCount": 0,  # Would need full scan
+                "projectPath": project_path,
+                "gitBranch": "",
+                "source": "jsonl",
+                "fullPath": str(jsonl_file),
+            }
+
+    return sessions
+
+
+def format_date(ts_str):
+    """Format timestamp for display."""
+    dt = parse_timestamp(ts_str)
+    if not dt:
+        return "unknown     "
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def truncate(text, max_len):
+    """Truncate text with ellipsis."""
+    if not text:
+        return ""
+    # Collapse whitespace and newlines
+    text = " ".join(text.split())
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1] + "…"
+
+
+def project_shortname(path):
+    """Shorten project path for display."""
+    if not path:
+        return ""
+    # Strip common prefix
+    prefix = "/home/administrator/projects/"
+    if path.startswith(prefix):
+        return path[len(prefix):] or "(projects root)"
+    prefix2 = "/home/administrator/"
+    if path.startswith(prefix2):
+        return "~/" + path[len(prefix2):]
+    return path
+
+
+def is_agent_session(session):
+    """Detect if a session is an agent auto-reply (not interactive CLI)."""
+    first = session.get("firstPrompt", "")
+    if AGENT_RE.search(first):
+        return True
+    return False
+
+
+def is_trivial_session(session):
+    """Detect trivial sessions (exit-only, no real work)."""
+    summary = session.get("summary", "")
+    if summary in TRIVIAL_SUMMARIES:
+        return True
+    first = session.get("firstPrompt", "")
+    if first in ("No prompt", "", None) and not summary:
+        return True
+    msgs = session.get("messageCount", 0)
+    if msgs and msgs <= 2 and not summary:
+        return True
+    return False
+
+
+def main():
+    parser = argparse.ArgumentParser(description="List Claude Code CLI sessions")
+    parser.add_argument("-n", "--limit", type=int, default=0, help="Show last N sessions (0=all)")
+    parser.add_argument("-p", "--project", type=str, default="", help="Filter by project path substring")
+    parser.add_argument("--all", action="store_true", help="Include agent auto-reply and trivial sessions")
+    parser.add_argument("--long", action="store_true", help="Show full summary text")
+    parser.add_argument("--csv", action="store_true", help="CSV output")
+    parser.add_argument("--json", action="store_true", help="JSON output")
+    parser.add_argument("--count-messages", action="store_true", help="Count messages in unindexed sessions (slow)")
+    args = parser.parse_args()
+
+    sessions = collect_sessions()
+
+    # Convert to list and sort by created date (most recent first)
+    session_list = list(sessions.values())
+    session_list.sort(key=lambda s: s.get("created", "") or "0", reverse=True)
+
+    # Filter by project path or content
+    if args.project:
+        needle = args.project.lower()
+        session_list = [
+            s for s in session_list
+            if needle in s.get("projectPath", "").lower()
+            or needle in s.get("summary", "").lower()
+            or needle in s.get("firstPrompt", "").lower()
+        ]
+
+    if not args.all:
+        # Filter out agent auto-reply sessions and trivial sessions
+        session_list = [s for s in session_list if not is_agent_session(s) and not is_trivial_session(s)]
+    else:
+        # Still filter out completely empty sessions
+        session_list = [s for s in session_list if s.get("firstPrompt") not in ("No prompt", "", None) or s.get("summary")]
+
+    # Count messages for unindexed if requested
+    if args.count_messages:
+        for s in session_list:
+            if s["source"] == "jsonl" and s["messageCount"] == 0 and s["fullPath"]:
+                s["messageCount"] = get_message_count(s["fullPath"])
+
+    # Apply limit
+    if args.limit > 0:
+        session_list = session_list[: args.limit]
+
+    if not session_list:
+        print("No sessions found.")
+        return
+
+    # Output
+    if args.json:
+        json.dump(session_list, sys.stdout, indent=2)
+        print()
+        return
+
+    if args.csv:
+        import csv
+        writer = csv.writer(sys.stdout)
+        writer.writerow(["date", "session_id", "project", "messages", "summary_or_prompt"])
+        for s in session_list:
+            desc = s.get("summary") or s.get("firstPrompt", "")
+            writer.writerow([
+                format_date(s["created"]).strip(),
+                s["sessionId"],
+                project_shortname(s["projectPath"]),
+                s["messageCount"] or "",
+                desc,
+            ])
+        return
+
+    # Table output
+    max_summary = 120 if args.long else 60
+    max_project = 20
+
+    print(f"{'Date':>16}  {'Project':<{max_project}}  {'Msgs':>4}  {'Description'}")
+    print(f"{'─' * 16}  {'─' * max_project}  {'─' * 4}  {'─' * max_summary}")
+
+    for s in session_list:
+        date = format_date(s["created"])
+        project = truncate(project_shortname(s["projectPath"]), max_project)
+        msgs = str(s["messageCount"]) if s["messageCount"] else "  -"
+        desc = s.get("summary") or s.get("firstPrompt", "")
+        desc = truncate(desc, max_summary)
+
+        print(f"{date:>16}  {project:<{max_project}}  {msgs:>4}  {desc}")
+
+    print(f"\nTotal: {len(session_list)} sessions")
+
+
+if __name__ == "__main__":
+    main()
