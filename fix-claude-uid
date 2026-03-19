@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# fix-claude-uid — Fix missing /etc/passwd entry for Claude Code CLI container
+#
+# Problem: Claude Code runs as UID 2000 inside a container, but the container's
+#          /etc/passwd has no entry for it. SSH/git fail with "No user exists for uid 2000".
+#
+# Solution: Find the Claude Code container and inject the passwd/group entries
+#           into the CONTAINER's /etc/passwd (not the host's).
+#
+# Usage: Run as root (or with sudo) on the host:
+#   sudo /home/administrator/projects/devscripts/fix-claude-uid
+#
+# This is idempotent — safe to run multiple times.
+# NOTE: Container /etc/passwd resets on restart, so this may need re-running.
+
+set -euo pipefail
+
+TARGET_UID=2000
+TARGET_GID=2000
+USERNAME="administrator"
+HOME_DIR="/home/administrator"
+USER_SHELL="/bin/bash"
+
+echo "=== fix-claude-uid diagnostic ==="
+echo "Host: $(hostname)"
+echo "Date: $(date)"
+echo ""
+
+# Must run as root on the host
+if [[ $EUID -ne 0 ]]; then
+    echo "❌ This script must be run as root (or with sudo)."
+    echo "   sudo $0"
+    exit 1
+fi
+
+# ── Step 0: Clean up host /etc/passwd if we accidentally wrote there ─────
+echo "🧹 Checking host /etc/passwd for stale UID 2000 entry..."
+if grep -q "^${USERNAME}:x:${TARGET_UID}:${TARGET_GID}" /etc/passwd 2>/dev/null; then
+    # Verify the host's real administrator user has a different UID
+    REAL_UID=$(id -u "${USERNAME}" 2>/dev/null || echo "none")
+    if [[ "$REAL_UID" != "${TARGET_UID}" ]] || [[ "$REAL_UID" == "none" ]]; then
+        echo "   Found stale entry (UID ${TARGET_UID}) in HOST /etc/passwd — removing..."
+        sed -i "/^${USERNAME}:x:${TARGET_UID}:${TARGET_GID}/d" /etc/passwd
+        echo "   ✅ Removed from /etc/passwd"
+    else
+        echo "   ⚠️  Host '${USERNAME}' IS UID ${TARGET_UID} — leaving alone."
+    fi
+else
+    echo "   ✅ Host /etc/passwd is clean."
+fi
+
+if grep -q "^${USERNAME}:x:${TARGET_GID}:" /etc/group 2>/dev/null; then
+    # Only remove if there's a duplicate (host may have a real group)
+    HOST_GID=$(getent group "${USERNAME}" 2>/dev/null | cut -d: -f3 || echo "none")
+    if [[ "$HOST_GID" != "${TARGET_GID}" ]] || [[ "$HOST_GID" == "none" ]]; then
+        echo "   Found stale group entry (GID ${TARGET_GID}) in HOST /etc/group — removing..."
+        sed -i "/^${USERNAME}:x:${TARGET_GID}:/d" /etc/group
+        echo "   ✅ Removed from /etc/group"
+    fi
+fi
+echo ""
+
+# ── Step 1: Find and fix Claude Code containers ─────────────────────────
+# Find Claude Code container(s) — look for the claude-code process
+echo "🔍 Looking for Claude Code containers..."
+CONTAINERS=()
+
+# Method 1: Find containers running as UID 2000 with node/claude processes
+while IFS= read -r cid; do
+    [[ -z "$cid" ]] && continue
+    # Check if this container has a process running as UID 2000
+    if docker exec "$cid" id 2>/dev/null | grep -q "uid=${TARGET_UID}"; then
+        CONTAINERS+=("$cid")
+    fi
+done < <(docker ps --format '{{.ID}}' 2>/dev/null)
+
+# Method 2: Also check by image name patterns common to Claude Code
+if [[ ${#CONTAINERS[@]} -eq 0 ]]; then
+    echo "   Trying image-based detection..."
+    while IFS= read -r cid; do
+        [[ -z "$cid" ]] && continue
+        CONTAINERS+=("$cid")
+    done < <(docker ps --filter "ancestor=claude" --format '{{.ID}}' 2>/dev/null)
+fi
+
+# Method 3: Check all containers for the missing UID
+if [[ ${#CONTAINERS[@]} -eq 0 ]]; then
+    echo "   Trying broad search (all containers with UID 2000 processes)..."
+    while IFS= read -r cid; do
+        [[ -z "$cid" ]] && continue
+        if docker exec "$cid" sh -c "grep -q ':${TARGET_UID}:' /etc/passwd 2>/dev/null" 2>/dev/null; then
+            continue  # Already has the entry
+        fi
+        # Check if any process runs as UID 2000
+        if docker top "$cid" 2>/dev/null | awk 'NR>1 {print $2}' | grep -q "^${TARGET_UID}$" 2>/dev/null; then
+            CONTAINERS+=("$cid")
+        fi
+    done < <(docker ps --format '{{.ID}}' 2>/dev/null)
+fi
+
+if [[ ${#CONTAINERS[@]} -eq 0 ]]; then
+    echo "❌ No containers found running as UID ${TARGET_UID}."
+    echo ""
+    echo "   Diagnostic info:"
+    echo "   Running containers:"
+    docker ps --format "   {{.ID}}  {{.Names}}  {{.Image}}" 2>/dev/null || echo "   (docker not available)"
+    echo ""
+    echo "   Try manually: docker exec <container_id> cat /etc/passwd"
+    exit 1
+fi
+
+echo "   Found ${#CONTAINERS[@]} container(s) to fix."
+echo ""
+
+# Fix each container
+FIXED=0
+for CID in "${CONTAINERS[@]}"; do
+    CNAME=$(docker inspect --format '{{.Name}}' "$CID" 2>/dev/null | sed 's|^/||')
+    echo "════════════════════════════════════════════════════════════"
+    echo "📦 Container: ${CNAME} (${CID:0:12})"
+    echo "════════════════════════════════════════════════════════════"
+
+    # Diagnostic: show current state
+    echo "   Current /etc/passwd entries for UID ${TARGET_UID}:"
+    docker exec "$CID" grep ":${TARGET_UID}:" /etc/passwd 2>/dev/null || echo "   (none)"
+
+    # Check if already fixed
+    if docker exec "$CID" grep -q "^${USERNAME}:" /etc/passwd 2>/dev/null; then
+        echo "   ✅ Already has '${USERNAME}' entry. Skipping."
+        continue
+    fi
+
+    # Check if /etc/passwd is writable inside container
+    if docker exec "$CID" sh -c "test -w /etc/passwd" 2>/dev/null; then
+        echo "   📝 /etc/passwd is writable inside container. Adding entry..."
+        docker exec "$CID" sh -c "echo '${USERNAME}:x:${TARGET_UID}:${TARGET_GID}::${HOME_DIR}:${USER_SHELL}' >> /etc/passwd"
+        echo "   ✅ passwd entry added."
+    else
+        echo "   ⚠️  /etc/passwd is read-only inside container."
+        echo "   📝 Attempting copy-modify-mount workaround..."
+
+        # Copy passwd out, modify, copy back
+        TMPFILE=$(mktemp /tmp/passwd.XXXXXX)
+        docker cp "${CID}:/etc/passwd" "$TMPFILE"
+        echo "${USERNAME}:x:${TARGET_UID}:${TARGET_GID}::${HOME_DIR}:${USER_SHELL}" >> "$TMPFILE"
+        docker cp "$TMPFILE" "${CID}:/etc/passwd"
+        rm -f "$TMPFILE"
+        echo "   ✅ passwd entry added via docker cp."
+    fi
+
+    # Same for /etc/group
+    if ! docker exec "$CID" grep -q "^${USERNAME}:" /etc/group 2>/dev/null && \
+       ! docker exec "$CID" grep -q ":${TARGET_GID}:" /etc/group 2>/dev/null; then
+        if docker exec "$CID" sh -c "test -w /etc/group" 2>/dev/null; then
+            docker exec "$CID" sh -c "echo '${USERNAME}:x:${TARGET_GID}:' >> /etc/group"
+            echo "   ✅ group entry added."
+        else
+            TMPFILE=$(mktemp /tmp/group.XXXXXX)
+            docker cp "${CID}:/etc/group" "$TMPFILE"
+            echo "${USERNAME}:x:${TARGET_GID}:" >> "$TMPFILE"
+            docker cp "$TMPFILE" "${CID}:/etc/group"
+            rm -f "$TMPFILE"
+            echo "   ✅ group entry added via docker cp."
+        fi
+    else
+        echo "   ✅ group entry already exists."
+    fi
+
+    # Verify
+    echo ""
+    echo "   🔍 Verification:"
+    echo "   passwd: $(docker exec "$CID" grep "${USERNAME}" /etc/passwd 2>/dev/null || echo 'MISSING')"
+    echo "   whoami: $(docker exec -u ${TARGET_UID} "$CID" whoami 2>/dev/null || echo 'FAILED')"
+    echo "   ssh test: $(docker exec -u ${TARGET_UID} "$CID" ssh -T -o StrictHostKeyChecking=no -o ConnectTimeout=5 -p 2222 git@gitlab.ai-servicers.com 2>&1 | head -1 || echo 'see above')"
+    echo ""
+    FIXED=$((FIXED + 1))
+done
+
+echo "════════════════════════════════════════════════════════════"
+echo "📊 Summary: Fixed ${FIXED}/${#CONTAINERS[@]} containers"
+echo ""
+echo "⚠️  Note: Container /etc/passwd resets on restart."
+echo "   If Claude Code restarts, run this script again."
+echo "   For a permanent fix, add to the Dockerfile or entrypoint:"
+echo "   RUN echo '${USERNAME}:x:${TARGET_UID}:${TARGET_GID}::${HOME_DIR}:${USER_SHELL}' >> /etc/passwd"
+echo "════════════════════════════════════════════════════════════"
