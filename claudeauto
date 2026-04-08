@@ -13,7 +13,6 @@
 #   claudeauto nginx "fix bug"    # Start with specific prompt
 
 SETTINGS_FILE="$HOME/.claude/settings.json"
-NATIVE_CLAUDE="$HOME/.local/bin/claude"
 
 # --- Check if using native installer (not stale npm global) ---
 check_claude_installation() {
@@ -45,18 +44,12 @@ check_claude_installation() {
   local current_ver
   current_ver=$(claude --version 2>/dev/null | head -1)
   echo ""
-  echo "  ╔══════════════════════════════════════════════════════════════╗"
-  echo "  ║  WARNING: Using non-native Claude Code ($current_ver)"
-  echo "  ║  Location: $current_claude"
-  echo "  ║                                                            ║"
-  echo "  ║  The npm install is deprecated and won't auto-update.      ║"
-  echo "  ║  Install the native version (auto-updates):                ║"
-  echo "  ║                                                            ║"
-  echo "  ║    curl -fsSL https://claude.ai/install.sh | bash          ║"
-  echo "  ║                                                            ║"
-  echo "  ║  Then remove the old npm global:                           ║"
-  echo "  ║    sudo npm uninstall -g @anthropic-ai/claude-code         ║"
-  echo "  ╚══════════════════════════════════════════════════════════════╝"
+  echo "  WARNING: Using non-native Claude Code ($current_ver)"
+  echo "  Location: $current_claude"
+  echo ""
+  echo "  Run this to switch to the native version (auto-updates):"
+  echo ""
+  echo "    claude install"
   echo ""
   echo "  Continuing in 5 seconds..."
   sleep 5
