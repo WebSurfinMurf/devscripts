@@ -61,18 +61,32 @@ ensure_autonomous_settings() {
   # Create ~/.claude if it doesn't exist
   mkdir -p "$HOME/.claude"
 
-  # If settings file doesn't exist, create minimal autonomous config
+  # Required settings for full autonomous mode
+  local REQUIRED_SETTINGS='{
+    "permissions": {"defaultMode": "bypassPermissions"},
+    "skipDangerousModePermissionPrompt": true,
+    "sandbox": {
+      "enabled": true,
+      "autoAllowBashIfSandboxed": true,
+      "allowUnsandboxedCommands": true,
+      "excludedCommands": ["docker"]
+    }
+  }'
+
+  # If settings file doesn't exist, create with autonomous config
   if [ ! -f "$SETTINGS_FILE" ]; then
-    echo '{"permissions":{"defaultMode":"bypassPermissions"},"skipDangerousModePermissionPrompt":true}' \
-      | python3 -m json.tool > "$SETTINGS_FILE"
+    echo "$REQUIRED_SETTINGS" | python3 -m json.tool > "$SETTINGS_FILE"
     echo "[claudeauto] Created $SETTINGS_FILE with autonomous settings"
     return
   fi
 
-  # Check required settings using python3 (always available)
-  local needs_update
-  needs_update=$(python3 -c "
+  # Check and fix settings using python3 (always available)
+  local result
+  result=$(python3 -c "
 import json, sys
+
+required = json.loads('''$REQUIRED_SETTINGS''')
+
 try:
     with open('$SETTINGS_FILE') as f:
         cfg = json.load(f)
@@ -80,43 +94,49 @@ except (json.JSONDecodeError, FileNotFoundError):
     print('corrupt')
     sys.exit(0)
 
-issues = []
-perm = cfg.get('permissions', {})
-if perm.get('defaultMode') != 'bypassPermissions':
-    issues.append('defaultMode')
+changed = []
+
+# permissions.defaultMode
+cfg.setdefault('permissions', {})
+if cfg['permissions'].get('defaultMode') != 'bypassPermissions':
+    cfg['permissions']['defaultMode'] = 'bypassPermissions'
+    changed.append('permissions.defaultMode')
+
+# skipDangerousModePermissionPrompt
 if cfg.get('skipDangerousModePermissionPrompt') is not True:
-    issues.append('skipDangerousModePermissionPrompt')
-print(','.join(issues) if issues else '')
+    cfg['skipDangerousModePermissionPrompt'] = True
+    changed.append('skipDangerousModePermissionPrompt')
+
+# sandbox settings
+req_sandbox = required['sandbox']
+cur_sandbox = cfg.get('sandbox', {})
+if cur_sandbox != req_sandbox:
+    # Merge required sandbox keys (preserve any extras user added)
+    cfg.setdefault('sandbox', {})
+    for k, v in req_sandbox.items():
+        if cfg['sandbox'].get(k) != v:
+            cfg['sandbox'][k] = v
+            changed.append(f'sandbox.{k}')
+
+if changed:
+    with open('$SETTINGS_FILE', 'w') as f:
+        json.dump(cfg, f, indent=2)
+        f.write('\n')
+    print(','.join(changed))
+else:
+    print('')
 " 2>/dev/null)
 
-  if [ "$needs_update" = "corrupt" ]; then
+  if [ "$result" = "corrupt" ]; then
     echo "[claudeauto] WARNING: $SETTINGS_FILE is corrupt/invalid JSON. Rebuilding..."
-    echo '{"permissions":{"defaultMode":"bypassPermissions"},"skipDangerousModePermissionPrompt":true}' \
-      | python3 -m json.tool > "$SETTINGS_FILE"
+    echo "$REQUIRED_SETTINGS" | python3 -m json.tool > "$SETTINGS_FILE"
     echo "[claudeauto] Recreated $SETTINGS_FILE"
     return
   fi
 
-  if [ -z "$needs_update" ]; then
-    return  # All good
+  if [ -n "$result" ]; then
+    echo "[claudeauto] Fixed settings: $result"
   fi
-
-  # Auto-fix missing/wrong settings (preserves all existing keys)
-  echo "[claudeauto] Fixing settings: $needs_update"
-  python3 -c "
-import json
-with open('$SETTINGS_FILE') as f:
-    cfg = json.load(f)
-
-cfg.setdefault('permissions', {})
-cfg['permissions']['defaultMode'] = 'bypassPermissions'
-cfg['skipDangerousModePermissionPrompt'] = True
-
-with open('$SETTINGS_FILE', 'w') as f:
-    json.dump(cfg, f, indent=2)
-    f.write('\n')
-"
-  echo "[claudeauto] Updated $SETTINGS_FILE for autonomous mode"
 }
 
 ensure_autonomous_settings
