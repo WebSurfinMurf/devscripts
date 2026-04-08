@@ -4,6 +4,7 @@
 #
 # Full auto mode:
 #   --dangerously-skip-permissions: Skip all permission prompts
+#   Checks and auto-fixes ~/.claude/settings.json for autonomous mode
 #   If no project specified, starts in ~/projects directory
 #
 # Examples:
@@ -11,10 +12,77 @@
 #   claudeauto nginx              # Start in nginx project, full auto
 #   claudeauto nginx "fix bug"    # Start with specific prompt
 
+SETTINGS_FILE="$HOME/.claude/settings.json"
+
+# --- Ensure settings.json is configured for full autonomous mode ---
+ensure_autonomous_settings() {
+  # Create ~/.claude if it doesn't exist
+  mkdir -p "$HOME/.claude"
+
+  # If settings file doesn't exist, create minimal autonomous config
+  if [ ! -f "$SETTINGS_FILE" ]; then
+    echo '{"permissions":{"defaultMode":"bypassPermissions"},"skipDangerousModePermissionPrompt":true}' \
+      | python3 -m json.tool > "$SETTINGS_FILE"
+    echo "[claudeauto] Created $SETTINGS_FILE with autonomous settings"
+    return
+  fi
+
+  # Check required settings using python3 (always available)
+  local needs_update
+  needs_update=$(python3 -c "
+import json, sys
+try:
+    with open('$SETTINGS_FILE') as f:
+        cfg = json.load(f)
+except (json.JSONDecodeError, FileNotFoundError):
+    print('corrupt')
+    sys.exit(0)
+
+issues = []
+perm = cfg.get('permissions', {})
+if perm.get('defaultMode') != 'bypassPermissions':
+    issues.append('defaultMode')
+if cfg.get('skipDangerousModePermissionPrompt') is not True:
+    issues.append('skipDangerousModePermissionPrompt')
+print(','.join(issues) if issues else '')
+" 2>/dev/null)
+
+  if [ "$needs_update" = "corrupt" ]; then
+    echo "[claudeauto] WARNING: $SETTINGS_FILE is corrupt/invalid JSON. Rebuilding..."
+    echo '{"permissions":{"defaultMode":"bypassPermissions"},"skipDangerousModePermissionPrompt":true}' \
+      | python3 -m json.tool > "$SETTINGS_FILE"
+    echo "[claudeauto] Recreated $SETTINGS_FILE"
+    return
+  fi
+
+  if [ -z "$needs_update" ]; then
+    return  # All good
+  fi
+
+  # Auto-fix missing/wrong settings (preserves all existing keys)
+  echo "[claudeauto] Fixing settings: $needs_update"
+  python3 -c "
+import json
+with open('$SETTINGS_FILE') as f:
+    cfg = json.load(f)
+
+cfg.setdefault('permissions', {})
+cfg['permissions']['defaultMode'] = 'bypassPermissions'
+cfg['skipDangerousModePermissionPrompt'] = True
+
+with open('$SETTINGS_FILE', 'w') as f:
+    json.dump(cfg, f, indent=2)
+    f.write('\n')
+"
+  echo "[claudeauto] Updated $SETTINGS_FILE for autonomous mode"
+}
+
+ensure_autonomous_settings
+
+# --- Navigate to project directory ---
 PROJECT="$1"
 PROMPT="$2"
 
-# If no project specified, use projects directory
 if [ -z "$PROJECT" ]; then
   cd "$HOME/projects"
 else
@@ -23,4 +91,4 @@ else
 fi
 
 # Launch Claude with full auto mode (no permission prompts)
-claude --dangerously-skip-permissions ${PROMPT:+"$PROMPT"}
+claude --dangerously-skip-permissions --permission-mode bypassPermissions --allow-dangerously-skip-permissions ${PROMPT:+"$PROMPT"}
