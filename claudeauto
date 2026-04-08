@@ -47,9 +47,10 @@ check_claude_installation() {
   echo "  WARNING: Using non-native Claude Code ($current_ver)"
   echo "  Location: $current_claude"
   echo ""
-  echo "  Run this to switch to the native version (auto-updates):"
+  echo "  Run these to switch to the native version (auto-updates):"
   echo ""
   echo "    claude install"
+  echo "    sudo npm uninstall -g @anthropic-ai/claude-code"
   echo ""
   echo "  Continuing in 5 seconds..."
   sleep 5
