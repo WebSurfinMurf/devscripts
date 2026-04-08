@@ -13,6 +13,54 @@
 #   claudeauto nginx "fix bug"    # Start with specific prompt
 
 SETTINGS_FILE="$HOME/.claude/settings.json"
+NATIVE_CLAUDE="$HOME/.local/bin/claude"
+
+# --- Check if using native installer (not stale npm global) ---
+check_claude_installation() {
+  local current_claude
+  current_claude=$(which claude 2>/dev/null)
+
+  if [ -z "$current_claude" ]; then
+    echo ""
+    echo "  ╔══════════════════════════════════════════════════════════════╗"
+    echo "  ║  Claude Code not found. Install the native version:        ║"
+    echo "  ║                                                            ║"
+    echo "  ║    curl -fsSL https://claude.ai/install.sh | bash          ║"
+    echo "  ╚══════════════════════════════════════════════════════════════╝"
+    echo ""
+    sleep 5
+    return
+  fi
+
+  # Resolve symlinks to find the real binary
+  local real_path
+  real_path=$(readlink -f "$current_claude" 2>/dev/null || echo "$current_claude")
+
+  # Native install lives under ~/.local/share/claude/versions/
+  if [[ "$real_path" == *"/.local/share/claude/versions/"* ]]; then
+    return  # Using native installer, all good
+  fi
+
+  # Using npm global or some other non-native install
+  local current_ver
+  current_ver=$(claude --version 2>/dev/null | head -1)
+  echo ""
+  echo "  ╔══════════════════════════════════════════════════════════════╗"
+  echo "  ║  WARNING: Using non-native Claude Code ($current_ver)"
+  echo "  ║  Location: $current_claude"
+  echo "  ║                                                            ║"
+  echo "  ║  The npm install is deprecated and won't auto-update.      ║"
+  echo "  ║  Install the native version (auto-updates):                ║"
+  echo "  ║                                                            ║"
+  echo "  ║    curl -fsSL https://claude.ai/install.sh | bash          ║"
+  echo "  ║                                                            ║"
+  echo "  ║  Then remove the old npm global:                           ║"
+  echo "  ║    sudo npm uninstall -g @anthropic-ai/claude-code         ║"
+  echo "  ╚══════════════════════════════════════════════════════════════╝"
+  echo ""
+  echo "  Continuing in 5 seconds..."
+  sleep 5
+}
 
 # --- Ensure settings.json is configured for full autonomous mode ---
 ensure_autonomous_settings() {
@@ -78,6 +126,7 @@ with open('$SETTINGS_FILE', 'w') as f:
 }
 
 ensure_autonomous_settings
+check_claude_installation
 
 # --- Navigate to project directory ---
 PROJECT="$1"
