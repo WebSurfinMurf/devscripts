@@ -139,8 +139,23 @@ else:
   fi
 }
 
+# --- Ensure tmux scrollback is at least 6000 lines ---
+check_tmux_scrollback() {
+  [ -z "$TMUX" ] && return  # Not in tmux
+
+  local current
+  current=$(tmux show-option -gqv history-limit 2>/dev/null)
+  current=${current:-2000}  # tmux default is 2000
+
+  if [ "$current" -lt 6000 ] 2>/dev/null; then
+    tmux set-option -g history-limit 6000
+    echo "[claudeauto] Increased tmux scrollback: $current -> 6000 lines"
+  fi
+}
+
 ensure_autonomous_settings
 check_claude_installation
+check_tmux_scrollback
 
 # --- Navigate to project directory ---
 PROJECT="$1"
