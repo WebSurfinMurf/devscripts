@@ -5,10 +5,10 @@
 # Full auto mode:
 #   --dangerously-skip-permissions: Skip all permission prompts
 #   Checks and auto-fixes ~/.claude/settings.json for autonomous mode
-#   If no project specified, starts in ~/projects directory
+#   If no project specified, starts in the current directory
 #
 # Examples:
-#   claudeauto                    # Start in projects dir, full auto
+#   claudeauto                    # Start in current dir, full auto
 #   claudeauto nginx              # Start in nginx project, full auto
 #   claudeauto nginx "fix bug"    # Start with specific prompt
 
@@ -161,9 +161,7 @@ check_tmux_scrollback
 PROJECT="$1"
 PROMPT="$2"
 
-if [ -z "$PROJECT" ]; then
-  cd "$HOME/projects"
-else
+if [ -n "$PROJECT" ]; then
   [ ! -d "$HOME/projects/$PROJECT" ] && echo "Project not found: $PROJECT" && exit 1
   cd "$HOME/projects/$PROJECT"
 fi
