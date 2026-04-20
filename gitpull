@@ -274,10 +274,38 @@ if [[ "${PROJECT}" == "all" ]]; then
   echo "🔄 Processing project repositories in ${BASE_DIR}..."
   echo ""
 
-  # Find all directories with .git subdirectory
+  # Expand .gitgroup containers: folders under $BASE_DIR that are NOT themselves
+  # repos but contain .gitgroup — we descend one level and treat each child
+  # with .git as a sibling of top-level repos. If the .gitgroup file lists
+  # children explicitly (one per line, # comments ok), only those are pulled.
+  declare -a REPO_DIRS=()
   for dir in "${BASE_DIR}"/*/; do
     if [[ -d "${dir}/.git" ]]; then
+      REPO_DIRS+=("${dir}")
+    elif [[ -f "${dir}/.gitgroup" ]]; then
+      group_name=$(basename "${dir}")
+      mapfile -t gg_entries < <(grep -vE '^\s*(#|$)' "${dir}/.gitgroup" 2>/dev/null || true)
+      if [[ ${#gg_entries[@]} -gt 0 ]]; then
+        for child in "${gg_entries[@]}"; do
+          [[ -d "${dir}${child}/.git" ]] && REPO_DIRS+=("${dir}${child}/")
+        done
+      else
+        for child in "${dir}"*/; do
+          [[ -d "${child}/.git" ]] && REPO_DIRS+=("${child}")
+        done
+      fi
+    fi
+  done
+
+  # Find all directories with .git subdirectory
+  for dir in "${REPO_DIRS[@]}"; do
+    if [[ -d "${dir}/.git" ]]; then
       repo_name=$(basename "${dir}")
+      # Prefix with group name if this is a .gitgroup child
+      parent=$(basename "$(dirname "${dir}")")
+      if [[ -f "$(dirname "${dir}")/.gitgroup" ]]; then
+        repo_name="${parent}/${repo_name}"
+      fi
 
       # Skip directories with .nogit marker file
       if [[ -f "${dir}/.nogit" ]]; then

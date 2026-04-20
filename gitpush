@@ -409,10 +409,33 @@ if [[ "${PROJECT}" == "all" ]]; then
   done
 
   # === REGULAR PROJECT REPOS ===
-  # Find all directories with .git subdirectory
+  # Expand .gitgroup containers (see gitpull for semantics).
+  declare -a REPO_DIRS=()
   for dir in "${BASE_DIR}"/*/; do
     if [[ -d "${dir}/.git" ]]; then
+      REPO_DIRS+=("${dir}")
+    elif [[ -f "${dir}/.gitgroup" ]]; then
+      mapfile -t gg_entries < <(grep -vE '^\s*(#|$)' "${dir}/.gitgroup" 2>/dev/null || true)
+      if [[ ${#gg_entries[@]} -gt 0 ]]; then
+        for child in "${gg_entries[@]}"; do
+          [[ -d "${dir}${child}/.git" ]] && REPO_DIRS+=("${dir}${child}/")
+        done
+      else
+        for child in "${dir}"*/; do
+          [[ -d "${child}/.git" ]] && REPO_DIRS+=("${child}")
+        done
+      fi
+    fi
+  done
+
+  # Find all directories with .git subdirectory
+  for dir in "${REPO_DIRS[@]}"; do
+    if [[ -d "${dir}/.git" ]]; then
       repo_name=$(basename "${dir}")
+      parent=$(basename "$(dirname "${dir}")")
+      if [[ -f "$(dirname "${dir}")/.gitgroup" ]]; then
+        repo_name="${parent}/${repo_name}"
+      fi
 
       # Skip directories with .nogit marker file
       if [[ -f "${dir}/.nogit" ]]; then
