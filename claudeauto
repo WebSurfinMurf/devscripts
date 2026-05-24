@@ -1,16 +1,22 @@
 #!/bin/bash
 # claudeauto - Launch Claude in full auto mode
-# Usage: claudeauto [project-name] [initial-prompt]
+# Usage: claudeauto [--fresh] [project-name] [initial-prompt]
 #
 # Full auto mode:
 #   --dangerously-skip-permissions: Skip all permission prompts
 #   Checks and auto-fixes ~/.claude/settings.json for autonomous mode
 #   If no project specified, starts in the current directory
 #
+# Session behavior:
+#   By default, resumes the most recent session in the target directory
+#   (via `claude --continue`). Falls back to a fresh session if none exists.
+#   Pass --fresh to force a new session.
+#
 # Examples:
-#   claudeauto                    # Start in current dir, full auto
-#   claudeauto nginx              # Start in nginx project, full auto
-#   claudeauto nginx "fix bug"    # Start with specific prompt
+#   claudeauto                    # Resume in current dir (or fresh if none)
+#   claudeauto nginx              # Resume in nginx project
+#   claudeauto --fresh nginx      # Force new session in nginx project
+#   claudeauto nginx "fix bug"    # Resume and send prompt
 
 SETTINGS_FILE="$HOME/.claude/settings.json"
 
@@ -157,14 +163,36 @@ ensure_autonomous_settings
 check_claude_installation
 check_tmux_scrollback
 
-# --- Navigate to project directory ---
+# --- Parse args ---
+RESUME=true
+if [ "$1" = "--fresh" ] || [ "$1" = "--new" ]; then
+  RESUME=false
+  shift
+fi
+
 PROJECT="$1"
 PROMPT="$2"
 
+# --- Navigate to project directory ---
 if [ -n "$PROJECT" ]; then
   [ ! -d "$HOME/projects/$PROJECT" ] && echo "Project not found: $PROJECT" && exit 1
   cd "$HOME/projects/$PROJECT"
 fi
 
+# --- Decide whether to resume ---
+# Claude Code stores per-cwd sessions in ~/.claude/projects/<encoded-cwd>/*.jsonl
+# where encoded-cwd is the absolute path with `/` replaced by `-`.
+CONTINUE_FLAG=""
+if [ "$RESUME" = true ]; then
+  ENCODED_CWD=$(pwd | sed 's|/|-|g')
+  SESSION_DIR="$HOME/.claude/projects/${ENCODED_CWD}"
+  if compgen -G "$SESSION_DIR/*.jsonl" > /dev/null 2>&1; then
+    CONTINUE_FLAG="--continue"
+    echo "[claudeauto] Resuming previous session in $(pwd)"
+  else
+    echo "[claudeauto] No previous session in $(pwd); starting fresh"
+  fi
+fi
+
 # Launch Claude with full auto mode (no permission prompts)
-claude --dangerously-skip-permissions --permission-mode bypassPermissions --allow-dangerously-skip-permissions ${PROMPT:+"$PROMPT"}
+claude $CONTINUE_FLAG --dangerously-skip-permissions --permission-mode bypassPermissions --allow-dangerously-skip-permissions ${PROMPT:+"$PROMPT"}
