@@ -21,7 +21,7 @@
 # - Retention: 7 daily, 4 weekly (Sat), 6 monthly (1st Sat)
 # - Logs to $BACKUPROOT/{username}/backup.log
 
-set -e
+set -eo pipefail
 
 # Source environment variables if not set
 if [ -z "$BACKUPROOT" ]; then
@@ -35,10 +35,13 @@ if [ -z "$BACKUPROOT" ]; then
 fi
 
 # Configuration
+# Retention sized for ~78 GB/archive on a 447 GB /mnt/backup volume.
+# 3 + 1 + 1 = 5 archives × 78 GB ≈ 390 GB (≈ 57 GB headroom). See
+# admin/backups/docs/context/invariants.md (I4) for the capacity math.
 PROJECT_NAME="data"
-RETENTION_DAILY=7
-RETENTION_WEEKLY=4
-RETENTION_MONTHLY=6
+RETENTION_DAILY=3
+RETENTION_WEEKLY=1
+RETENTION_MONTHLY=1
 
 # Date calculations
 TODAY=$(date +%Y-%m-%d)
@@ -110,6 +113,7 @@ for USERNAME in "${USERS[@]}"; do
     USER_BACKUP_ROOT="$BACKUPROOT/$USERNAME"
     BACKUP_DIR="$USER_BACKUP_ROOT/projects/$PROJECT_NAME"
     LOG_FILE="$USER_BACKUP_ROOT/backup.log"
+    USER_GROUP=$(id -gn "$USERNAME" 2>/dev/null || echo "$USERNAME")
 
     # Check if source directory exists
     if [ ! -d "$SOURCE_DIR" ]; then
@@ -123,8 +127,6 @@ for USERNAME in "${USERS[@]}"; do
     if [ ! -d "$BACKUP_DIR" ]; then
         echo -e "${YELLOW}  ! Creating backup directory: $BACKUP_DIR${NC}"
         mkdir -p "$BACKUP_DIR"
-        # Set ownership - use the user's primary group
-        USER_GROUP=$(id -gn "$USERNAME")
         chown -R "$USERNAME:$USER_GROUP" "$USER_BACKUP_ROOT"
     fi
 
@@ -152,24 +154,53 @@ for USERNAME in "${USERS[@]}"; do
     # - data/mongodb/journal/* : MongoDB WAL files (ephemeral, ~315MB)
     # - data/gitlab/logs/*.log : GitLab logs (growing continuously, ~100MB+)
 
-    # 1. DAILY BACKUP (always)
+    # 1. DAILY BACKUP (always) — stage to NVMe, verify locally, copy to USB
     DAILY_FILE="$BACKUP_DIR/${PROJECT_NAME}-daily-${TODAY}.tar.gz"
+    LOCAL_DIR="/var/tmp/backup-staging/$USERNAME/projects/$PROJECT_NAME"
+    LOCAL_FILE="$LOCAL_DIR/${PROJECT_NAME}-daily.tar.gz"
     if [ ! -f "$DAILY_FILE" ]; then
-        echo -e "${GREEN}  → Creating daily backup...${NC}"
-        if tar -czf "$DAILY_FILE" -C "$USER_HOME/projects" \
+        echo -e "${GREEN}  → Creating daily backup (NVMe stage → verify → copy to USB)...${NC}"
+
+        # Ensure local staging dir exists; wipe any prior local copy + stale quarantines
+        mkdir -p "$LOCAL_DIR"
+        chown -R "$USERNAME:$USER_GROUP" "/var/tmp/backup-staging/$USERNAME" 2>/dev/null || true
+        rm -f "$LOCAL_FILE" "$LOCAL_DIR/${PROJECT_NAME}-daily.tar.gz.failed."* 2>/dev/null || true
+
+        # tar can exit non-zero on benign "file changed as we read it" warnings under
+        # live snapshot (postgres WAL, loki chunks, mongo diagnostic). Don't trust its
+        # exit code — validate the archive structurally afterwards instead.
+        tar -czf "$LOCAL_FILE" -C "$USER_HOME/projects" \
             --exclude='data/netdata/cache/*.db*' \
             --exclude='data/volume-backups/*' \
             --exclude='data/mongodb/journal/*' \
             --exclude='data/gitlab/logs/*.log' \
-            "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
-            BACKUP_SIZE=$(du -sh "$DAILY_FILE" | cut -f1)
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - DAILY - Created: $(basename "$DAILY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
-            echo -e "${GREEN}    ✓ Daily backup created: $BACKUP_SIZE${NC}"
-            BACKUPS_CREATED=$((BACKUPS_CREATED + 1))
-            chown "$USERNAME:$USER_GROUP" "$DAILY_FILE"
+            "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE" || true
+
+        if [ -s "$LOCAL_FILE" ] \
+           && gzip -t "$LOCAL_FILE" 2>/dev/null \
+           && tar -tzf "$LOCAL_FILE" >/dev/null 2>&1; then
+            # Local archive verified on NVMe. Copy to USB and re-check size.
+            LOCAL_SIZE_HUMAN=$(du -sh "$LOCAL_FILE" | cut -f1)
+            echo -e "${GREEN}    ✓ Local archive verified ($LOCAL_SIZE_HUMAN); copying to USB...${NC}"
+            if cp "$LOCAL_FILE" "$DAILY_FILE" && sync \
+               && [ "$(stat -c %s "$LOCAL_FILE")" = "$(stat -c %s "$DAILY_FILE")" ]; then
+                BACKUP_SIZE=$(du -sh "$DAILY_FILE" | cut -f1)
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - DAILY - Created: $(basename "$DAILY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
+                echo -e "${GREEN}    ✓ Daily backup on USB: $BACKUP_SIZE${NC}"
+                BACKUPS_CREATED=$((BACKUPS_CREATED + 1))
+                chown "$USERNAME:$USER_GROUP" "$LOCAL_FILE" "$DAILY_FILE"
+            else
+                # Local archive is good; USB copy failed or truncated. Keep local, quarantine USB partial.
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - USB copy failed or size mismatch; quarantining USB partial. Local copy preserved at $LOCAL_FILE" >> "$LOG_FILE"
+                echo -e "${RED}    ✗ USB copy failed; quarantining USB partial. Local copy retained at $LOCAL_FILE${NC}"
+                mv -f "$DAILY_FILE" "${DAILY_FILE}.failed.$(date +%s)" 2>/dev/null || rm -f "$DAILY_FILE"
+                chown "$USERNAME:$USER_GROUP" "$LOCAL_FILE" 2>/dev/null || true
+            fi
         else
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Daily backup failed" >> "$LOG_FILE"
-            echo -e "${RED}    ✗ Daily backup failed${NC}"
+            # Local archive failed verification — quarantine local, don't touch USB.
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Local archive missing or fails gzip/tar verify; quarantining as .failed" >> "$LOG_FILE"
+            echo -e "${RED}    ✗ Local archive failed verification; quarantining as .failed${NC}"
+            mv -f "$LOCAL_FILE" "${LOCAL_FILE}.failed.$(date +%s)" 2>/dev/null || rm -f "$LOCAL_FILE"
         fi
     else
         echo -e "${YELLOW}    ⊙ Daily backup already exists${NC}"
@@ -180,20 +211,24 @@ for USERNAME in "${USERS[@]}"; do
         WEEKLY_FILE="$BACKUP_DIR/${PROJECT_NAME}-weekly-${TODAY}.tar.gz"
         if [ ! -f "$WEEKLY_FILE" ]; then
             echo -e "${GREEN}  → Creating weekly backup...${NC}"
-            if tar -czf "$WEEKLY_FILE" -C "$USER_HOME/projects" \
+            tar -czf "$WEEKLY_FILE" -C "$USER_HOME/projects" \
                 --exclude='data/netdata/cache/*.db*' \
                 --exclude='data/volume-backups/*' \
                 --exclude='data/mongodb/journal/*' \
                 --exclude='data/gitlab/logs/*.log' \
-                "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
+                "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE" || true
+            if [ -s "$WEEKLY_FILE" ] \
+               && gzip -t "$WEEKLY_FILE" 2>/dev/null \
+               && tar -tzf "$WEEKLY_FILE" >/dev/null 2>&1; then
                 BACKUP_SIZE=$(du -sh "$WEEKLY_FILE" | cut -f1)
                 echo "$(date '+%Y-%m-%d %H:%M:%S') - WEEKLY - Created: $(basename "$WEEKLY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
                 echo -e "${GREEN}    ✓ Weekly backup created: $BACKUP_SIZE${NC}"
                 BACKUPS_CREATED=$((BACKUPS_CREATED + 1))
                 chown "$USERNAME:$USER_GROUP" "$WEEKLY_FILE"
             else
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Weekly backup failed" >> "$LOG_FILE"
-                echo -e "${RED}    ✗ Weekly backup failed${NC}"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Weekly archive missing or fails gzip/tar verify; quarantining as .failed" >> "$LOG_FILE"
+                echo -e "${RED}    ✗ Weekly archive failed verification; quarantining as .failed${NC}"
+                mv -f "$WEEKLY_FILE" "${WEEKLY_FILE}.failed.$(date +%s)" 2>/dev/null || rm -f "$WEEKLY_FILE"
             fi
         else
             echo -e "${YELLOW}    ⊙ Weekly backup already exists${NC}"
@@ -205,20 +240,24 @@ for USERNAME in "${USERS[@]}"; do
         MONTHLY_FILE="$BACKUP_DIR/${PROJECT_NAME}-monthly-${TODAY}.tar.gz"
         if [ ! -f "$MONTHLY_FILE" ]; then
             echo -e "${GREEN}  → Creating monthly backup...${NC}"
-            if tar -czf "$MONTHLY_FILE" -C "$USER_HOME/projects" \
+            tar -czf "$MONTHLY_FILE" -C "$USER_HOME/projects" \
                 --exclude='data/netdata/cache/*.db*' \
                 --exclude='data/volume-backups/*' \
                 --exclude='data/mongodb/journal/*' \
                 --exclude='data/gitlab/logs/*.log' \
-                "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE"; then
+                "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE" || true
+            if [ -s "$MONTHLY_FILE" ] \
+               && gzip -t "$MONTHLY_FILE" 2>/dev/null \
+               && tar -tzf "$MONTHLY_FILE" >/dev/null 2>&1; then
                 BACKUP_SIZE=$(du -sh "$MONTHLY_FILE" | cut -f1)
                 echo "$(date '+%Y-%m-%d %H:%M:%S') - MONTHLY - Created: $(basename "$MONTHLY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
                 echo -e "${GREEN}    ✓ Monthly backup created: $BACKUP_SIZE${NC}"
                 BACKUPS_CREATED=$((BACKUPS_CREATED + 1))
                 chown "$USERNAME:$USER_GROUP" "$MONTHLY_FILE"
             else
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Monthly backup failed" >> "$LOG_FILE"
-                echo -e "${RED}    ✗ Monthly backup failed${NC}"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Monthly archive missing or fails gzip/tar verify; quarantining as .failed" >> "$LOG_FILE"
+                echo -e "${RED}    ✗ Monthly archive failed verification; quarantining as .failed${NC}"
+                mv -f "$MONTHLY_FILE" "${MONTHLY_FILE}.failed.$(date +%s)" 2>/dev/null || rm -f "$MONTHLY_FILE"
             fi
         else
             echo -e "${YELLOW}    ⊙ Monthly backup already exists${NC}"

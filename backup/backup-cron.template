@@ -17,7 +17,7 @@
 
 # System-wide backup cron job
 # Runs daily at 4:00 AM for all users
-# Backs up ~/projects/data/ with rotation (7 daily, 4 weekly, 6 monthly)
+# Backs up ~/projects/data/ with rotation (3 daily, 1 weekly, 1 monthly)
 
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
