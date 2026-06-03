@@ -1,0 +1,590 @@
+#!/usr/bin/env python3
+"""gitlab-status — surface in-flight enhancement::* state across GitLab projects.
+
+Answers two recurring questions without opening a board:
+  - executive scan: "what should I work on next?"   (--all / --recent)
+  - project enter:  "where did I leave off here?"    (no args / <project>)
+
+Source of truth for state is the GitLab issue board: enhancement::<name> scoped
+labels group cards; state labels (in-progress/decision-needed/needs-approval/
+review/ready/blocked/backlog/done) + title prefixes (TASK: Solution|Plan|Execute,
+DECISION G<n>, INFO:, PHASE) drive the human-readable STATE string.
+
+Design spec: ~/.claude/skills/gitlab-status/SPEC.md
+Depends on: glab (next to this script or on PATH), git. No pip deps.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from shutil import get_terminal_size
+
+# ── glab plumbing ──────────────────────────────────────────────────────────
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _glab_bin() -> str:
+    local = os.path.join(_SCRIPT_DIR, "glab")
+    return local if os.path.isfile(local) else "glab"
+
+
+def glab_api(path: str) -> object:
+    """Call `glab api <path>` and return parsed JSON. Raises on auth/exec error."""
+    try:
+        proc = subprocess.run(
+            [_glab_bin(), "api", path],
+            capture_output=True, text=True, timeout=30,
+        )
+    except FileNotFoundError:
+        die("glab not found. Install it or place it next to this script "
+            "(~/projects/devscripts/glab).")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"glab api timed out: {path}")
+    if proc.returncode != 0:
+        err = (proc.stderr or "").strip()
+        if "401" in err or "authenticat" in err.lower() or "token" in err.lower():
+            die("glab is not authenticated. Run: glab auth login "
+                "(or check ~/.config/glab-cli/config.yml).")
+        raise RuntimeError(f"glab api failed ({path}): {err[:200]}")
+    out = proc.stdout.strip()
+    if not out:
+        return []
+    return json.loads(out)
+
+
+def glab_api_paged(path: str, max_pages: int = 5) -> list:
+    """Paginate a list endpoint until a short page or max_pages."""
+    sep = "&" if "?" in path else "?"
+    items: list = []
+    for page in range(1, max_pages + 1):
+        chunk = glab_api(f"{path}{sep}per_page=100&page={page}")
+        if not isinstance(chunk, list) or not chunk:
+            break
+        items.extend(chunk)
+        if len(chunk) < 100:
+            break
+    return items
+
+
+def die(msg: str, code: int = 2) -> None:
+    print(f"gitlab-status: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+# ── time helpers ───────────────────────────────────────────────────────────
+
+def parse_dt(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def age_str(dt: datetime | None) -> str:
+    if dt is None:
+        return "?"
+    secs = (now_utc() - dt.astimezone(timezone.utc)).total_seconds()
+    if secs < 0:
+        secs = 0
+    mins = secs / 60
+    if mins < 60:
+        return f"{int(mins)}m"
+    hours = mins / 60
+    if hours < 48:
+        return f"{int(hours)}h"
+    days = hours / 24
+    if days < 21:
+        return f"{int(days)}d"
+    return f"{int(days / 7)}w"
+
+
+def parse_since(s: str) -> float:
+    """'4w' -> seconds. Supports d/w/m (months≈30d). Default unit = weeks."""
+    m = re.fullmatch(r"(\d+)\s*([dwm]?)", s.strip().lower())
+    if not m:
+        die(f"bad --since value: {s!r} (use e.g. 4w, 30d, 2m)")
+    n = int(m.group(1))
+    unit = m.group(2) or "w"
+    return n * {"d": 86400, "w": 604800, "m": 2592000}[unit]
+
+
+# ── state derivation ───────────────────────────────────────────────────────
+
+# Higher = more attention-worthy. Drives both representative-card pick and the
+# enhancement chosen for the single top-1 row in multi-project mode.
+STATE_PRIORITY = {
+    "in-progress": 100,
+    "decision-needed": 90,
+    "needs-approval": 85,
+    "review": 80,
+    "blocked": 70,
+    "ready": 60,
+    "backlog": 30,
+    "done": 10,
+}
+PRIORITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
+_PREFIX_RE = re.compile(
+    r"^(TASK|INFO|DECISION|PHASE|FEATURE|BACKLOG|TEMPLATE|CROSS-PROJECT|Task)\b"
+    r"[^:—-]*[:—-]?\s*", re.IGNORECASE)
+
+
+def card_state(labels: list[str]) -> str:
+    """The single board-state label that wins for this card (highest priority)."""
+    best, best_p = "", -1
+    for lab in labels:
+        p = STATE_PRIORITY.get(lab)
+        if p is not None and p > best_p:
+            best, best_p = lab, p
+    return best
+
+
+def card_priority(labels: list[str]) -> int:
+    for lab in labels:
+        if lab.startswith("priority::"):
+            return PRIORITY_RANK.get(lab.split("::", 1)[1], 0)
+    return 0
+
+
+def short_title(title: str, enh: str) -> str:
+    t = title.strip()
+    # drop trailing " — <enhancement>" / " - <enhancement>"
+    t = re.sub(rf"\s*[—-]\s*{re.escape(enh)}\s*$", "", t)
+    t = re.sub(r"\s*\((placeholder|idle)\)\s*$", "", t)
+    stripped = _PREFIX_RE.sub("", t).strip()
+    return stripped or t
+
+
+def gate_id(title: str) -> str | None:
+    m = re.search(r"\bG(\d+)\b", title)
+    return f"G{m.group(1)}" if m else None
+
+
+def state_string(rep: dict, enh: str, cards: list[dict]) -> str:
+    """Human STATE string for the representative card of an enhancement."""
+    labels = rep["labels"]
+    title = rep["title"]
+    state = card_state(labels)
+    short = short_title(title, enh)
+    age = age_str(parse_dt(rep.get("updated_at")))
+
+    if state == "decision-needed":
+        decisions = [c for c in cards
+                     if "decision-needed" in c["labels"] and "done" not in c["labels"]]
+        n = len(decisions)
+        if n > 1:
+            return f"DECISION ×{n} awaiting your call"
+        gid = gate_id(title)
+        return f"DECISION {gid} awaiting your call" if gid else f"{short} — decision needed"
+
+    if state == "in-progress":
+        return f"{short} in progress ({age} ago)"
+
+    if state in ("needs-approval", "review"):
+        if re.search(r"\bSolution\b", title):
+            return "SOLUTION ready · awaiting approval"
+        if re.search(r"\bPlan\b", title):
+            return "PLAN ready · awaiting approval"
+        if state == "review":
+            return f"{short} in review"
+        return f"{short} · awaiting approval"
+
+    if state == "blocked":
+        return f"{short} BLOCKED"
+
+    if state == "ready":
+        if re.search(r"\bSolution\b", title):
+            return "SOLUTION ready · awaiting approval"
+        if re.search(r"\bPlan\b", title):
+            return "PLAN ready · awaiting approval"
+        if re.search(r"\bExecute\b", title):
+            if _plan_done(cards):
+                return "PLAN approved · EXECUTE next"
+            return "EXECUTE ready"
+        return f"{short} ready"
+
+    if state == "backlog":
+        if re.search(r"\bExecute\b", title) and _plan_done(cards):
+            return "PLAN approved · EXECUTE next"
+        return f"{short} (backlog)"
+
+    if state == "done":
+        return f"✓ {enh} done ({age} ago)"
+
+    return short or "(unknown)"
+
+
+def _plan_done(cards: list[dict]) -> bool:
+    for c in cards:
+        if re.search(r"\bPlan\b", c["title"]) and "done" in c["labels"]:
+            return True
+    return False
+
+
+def state_color(rep: dict | None) -> str:
+    if rep is None:
+        return "dim"
+    state = card_state(rep["labels"])
+    return {
+        "in-progress": "cyan",
+        "decision-needed": "yellow",
+        "needs-approval": "yellow",
+        "review": "yellow",
+        "blocked": "red",
+        "ready": "green",
+        "backlog": "blue",
+        "done": "dim",
+    }.get(state, "")
+
+
+# ── per-enhancement / per-project assembly ─────────────────────────────────
+
+def enhancement_labels(labels: list[str]) -> list[str]:
+    return [l.split("::", 1)[1] for l in labels if l.startswith("enhancement::")]
+
+
+def pick_representative(cards: list[dict]) -> dict:
+    """Most attention-worthy card: state priority, then card priority, then recency."""
+    def key(c):
+        return (
+            STATE_PRIORITY.get(card_state(c["labels"]), 0),
+            card_priority(c["labels"]),
+            parse_dt(c.get("updated_at")) or datetime.min.replace(tzinfo=timezone.utc),
+            c["iid"],
+        )
+    return max(cards, key=key)
+
+
+def build_project(proj: dict, issues: list[dict]) -> dict:
+    """Group a project's enhancement cards into {enhancement -> summary}."""
+    by_enh: dict[str, list[dict]] = {}
+    for iss in issues:
+        for enh in enhancement_labels(iss["labels"]):
+            by_enh.setdefault(enh, []).append(iss)
+
+    enhancements = {}
+    for enh, cards in by_enh.items():
+        rep = pick_representative(cards)
+        decisions_open = sum(
+            1 for c in cards
+            if "decision-needed" in c["labels"] and "done" not in c["labels"])
+        max_upd = max((parse_dt(c.get("updated_at")) for c in cards
+                       if parse_dt(c.get("updated_at"))), default=None)
+        enhancements[enh] = {
+            "state": state_string(rep, enh, cards),
+            "rep_iid": rep["iid"],
+            "rep_url": rep.get("web_url", ""),
+            "rep_priority": STATE_PRIORITY.get(card_state(rep["labels"]), 0),
+            "rep_card": rep,
+            "decisions_open": decisions_open,
+            "card_count": len(cards),
+            "max_updated_at": max_upd.isoformat() if max_upd else None,
+            "_max_upd_dt": max_upd,
+        }
+    return {
+        "path": proj["path_with_namespace"],
+        "id": proj["id"],
+        "web_url": proj.get("web_url", ""),
+        "last_activity_at": proj.get("last_activity_at"),
+        "enhancements": enhancements,
+    }
+
+
+def top_enhancement(p: dict) -> tuple[str, dict] | None:
+    """The one enhancement to show in multi-project mode (highest priority)."""
+    if not p["enhancements"]:
+        return None
+    name = max(
+        p["enhancements"],
+        key=lambda n: (
+            p["enhancements"][n]["rep_priority"],
+            p["enhancements"][n]["_max_upd_dt"] or datetime.min.replace(tzinfo=timezone.utc),
+        ),
+    )
+    return name, p["enhancements"][name]
+
+
+# ── data fetch ─────────────────────────────────────────────────────────────
+
+def fetch_issues(project_id: int) -> list[dict]:
+    raw = glab_api_paged(f"/projects/{project_id}/issues?state=opened")
+    return [i for i in raw if any(l.startswith("enhancement::") for l in i["labels"])]
+
+
+def fetch_last_commit(project_id: int) -> datetime | None:
+    try:
+        data = glab_api(f"/projects/{project_id}/repository/commits?per_page=1")
+    except RuntimeError:
+        return None
+    if isinstance(data, list) and data:
+        return parse_dt(data[0].get("committed_date"))
+    return None
+
+
+def list_all_projects() -> list[dict]:
+    return glab_api_paged(
+        "/projects?membership=true&simple=true&order_by=last_activity_at")
+
+
+def resolve_project(arg: str, all_projects: list[dict]) -> dict:
+    if "/" in arg:
+        try:
+            return glab_api(f"/projects/{arg.replace('/', '%2F')}")
+        except RuntimeError:
+            die(f"project not found: {arg}")
+    matches = [p for p in all_projects
+               if p["path"] == arg or p["path_with_namespace"].split("/")[-1] == arg]
+    if not matches:
+        die(f"no project named {arg!r} (try the full group/project path)")
+    if len(matches) > 1:
+        paths = "\n  ".join(p["path_with_namespace"] for p in matches)
+        die(f"{arg!r} is ambiguous; use the full path:\n  {paths}")
+    return matches[0]
+
+
+def detect_current_project(all_projects: list[dict]) -> dict:
+    try:
+        url = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, cwd=os.getcwd(),
+        ).stdout.strip()
+    except FileNotFoundError:
+        url = ""
+    if not url:
+        die("not inside a git repo (no origin remote). "
+            "Pass a project name or use --all.")
+    # git@host:group/project.git  |  https://host/group/project.git
+    m = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?$", url)
+    path = m.group(1) if m else ""
+    # strip a leading host segment if the regex grabbed host/group
+    for p in all_projects:
+        if p["path_with_namespace"] == path or p["path_with_namespace"].endswith("/" + path):
+            return p
+    # last resort: query the API directly
+    if path:
+        try:
+            return glab_api(f"/projects/{path.replace('/', '%2F')}")
+        except RuntimeError:
+            pass
+    die(f"could not map origin remote to a GitLab project (parsed {path!r}). "
+        "Pass the project name explicitly.")
+
+
+# ── rendering ──────────────────────────────────────────────────────────────
+
+ANSI = {
+    "reset": "\033[0m", "bold": "\033[1m", "dim": "\033[2m",
+    "red": "\033[31m", "green": "\033[32m", "yellow": "\033[33m",
+    "blue": "\033[34m", "cyan": "\033[36m",
+}
+
+
+class Painter:
+    def __init__(self, enabled: bool):
+        self.on = enabled
+
+    def __call__(self, text: str, *styles: str) -> str:
+        if not self.on or not styles:
+            return text
+        pre = "".join(ANSI.get(s, "") for s in styles)
+        return f"{pre}{text}{ANSI['reset']}"
+
+
+def trunc(s: str, n: int) -> str:
+    s = s or ""
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def render_multi(projects: list[dict], paint: Painter, width: int,
+                 idle_dates: dict[int, datetime | None]) -> str:
+    # Grid: project + enhancement + state in aligned columns on line 1; the bare
+    # URL drops to an indented line beneath (aligned under the enhancement column)
+    # so it stays a short, unbroken, clickable line.
+    tops = [(p, top_enhancement(p)) for p in projects]
+    pw = max((len(p["path"]) for p in projects), default=0)
+    ew = max((len(t[0]) for _, t in tops if t), default=0)  # enhancement column width
+
+    out = []
+    for p, top in tops:
+        proj = paint(p["path"].ljust(pw), "bold")  # ljust plain text → visible align
+        if top is None:
+            dt = idle_dates.get(p["id"]) or parse_dt(p["last_activity_at"])
+            out.append(f"{proj}  {paint(f'(idle, {age_str(dt)} ago)', 'dim')}")
+            continue
+        name, summ = top
+        state = summ["state"]
+        if summ["decisions_open"] > 1 and "DECISION" not in state:
+            state += f" (+{summ['decisions_open']} decisions)"
+        out.append(f"{proj}  {name.ljust(ew)}  {paint(state, state_color(summ['rep_card']))}")
+        if summ["rep_url"]:
+            out.append(f"{' ' * (pw + 2)}{summ['rep_url']}")  # aligned under enhancement
+
+    return "\n".join(out) if out else "No projects to show."
+
+
+def render_single(p: dict, paint: Painter,
+                  idle_dt: datetime | None) -> str:
+    out = []
+    header = paint(p["path"], "bold")
+    if not p["enhancements"]:
+        dt = idle_dt or parse_dt(p["last_activity_at"])
+        out.append(f"{header}  {paint(f'(idle, {age_str(dt)} ago)', 'dim')}")
+        return "\n".join(out)
+
+    out.append(header)
+    # most-active enhancement first
+    order = sorted(
+        p["enhancements"].items(),
+        key=lambda kv: (kv[1]["rep_priority"],
+                        kv[1]["_max_upd_dt"] or datetime.min.replace(tzinfo=timezone.utc)),
+        reverse=True,
+    )
+    for name, summ in order:
+        out.append("")
+        out.append(f"  {paint(name, 'bold')}")
+        state = summ["state"]
+        out.append(f"    {paint(state, state_color(summ['rep_card']))}"
+                   f"   {paint('#' + str(summ['rep_iid']), 'dim')}")
+        # bare, unstyled URL so terminal URL-detectors (Termius etc.) can linkify it
+        if summ["rep_url"]:
+            out.append(f"    {summ['rep_url']}")
+        dn = summ["decisions_open"]
+        if dn:
+            out.append(f"    {paint(f'decisions: {dn} awaiting', 'yellow')}")
+        else:
+            out.append(f"    {paint('decisions: none open', 'dim')}")
+    return "\n".join(out)
+
+
+def to_json(projects: list[dict], idle_dates: dict[int, datetime | None]) -> str:
+    obj = {}
+    for p in projects:
+        enh_out = {}
+        for name, s in p["enhancements"].items():
+            enh_out[name] = {
+                "state": s["state"],
+                "issue_iid": s["rep_iid"],
+                "url": s["rep_url"],
+                "decisions_open": s["decisions_open"],
+                "card_count": s["card_count"],
+                "max_updated_at": s["max_updated_at"],
+            }
+        dt = idle_dates.get(p["id"])
+        obj[p["path"]] = {
+            "id": p["id"],
+            "web_url": p["web_url"],
+            "idle": not enh_out,
+            "last_commit": dt.isoformat() if dt else None,
+            "last_activity_at": p["last_activity_at"],
+            "enhancements": enh_out,
+        }
+    return json.dumps(obj, indent=2)
+
+
+# ── main ───────────────────────────────────────────────────────────────────
+
+def main() -> None:
+    ap = argparse.ArgumentParser(
+        prog="gitlab-status",
+        description="Surface in-flight enhancement::* state across GitLab projects.",
+    )
+    ap.add_argument("project", nargs="?",
+                    help="project path (group/project) or short name; "
+                         "default = project detected from $PWD git remote")
+    ap.add_argument("--all", action="store_true",
+                    help="every project you are a member of")
+    ap.add_argument("--recent", action="store_true",
+                    help="implies --all; only projects with enhancement-card "
+                         "activity inside --since (default 4w)")
+    ap.add_argument("--since", default="4w",
+                    help="recency window for --recent (e.g. 4w, 30d, 2m)")
+    ap.add_argument("--json", action="store_true", help="emit JSON (for scripting)")
+    ap.add_argument("--no-color", action="store_true", help="disable ANSI color")
+    args = ap.parse_args()
+
+    multi = args.all or args.recent
+    # Fetch the project list when we need to survey everything or to resolve a
+    # short name / detect the current repo; a fully-qualified path hits the API directly.
+    need_list = multi or not args.project or "/" not in (args.project or "")
+    all_projects = list_all_projects() if need_list else []
+
+    # determine target project set
+    if multi:
+        targets = all_projects
+    elif args.project:
+        targets = [resolve_project(args.project, all_projects)]
+    else:
+        targets = [detect_current_project(all_projects)]
+
+    # fetch issues in parallel
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        issue_lists = list(pool.map(lambda p: fetch_issues(p["id"]), targets))
+    built = [build_project(p, iss) for p, iss in zip(targets, issue_lists)]
+
+    # --recent filter
+    if args.recent:
+        cutoff = now_utc().timestamp() - parse_since(args.since)
+        kept = []
+        for b in built:
+            recent = any(
+                (s["_max_upd_dt"] and s["_max_upd_dt"].timestamp() >= cutoff)
+                for s in b["enhancements"].values()
+            )
+            if recent:
+                kept.append(b)
+        built = kept
+
+    # last-commit dates only for idle projects we will display
+    idle_ids = [b["id"] for b in built if not b["enhancements"]]
+    idle_dates: dict[int, datetime | None] = {}
+    if idle_ids:
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            for pid, dt in zip(idle_ids, pool.map(fetch_last_commit, idle_ids)):
+                idle_dates[pid] = dt
+
+    # sort multi output: active projects first (by priority/recency), idle last
+    if multi:
+        def sort_key(b):
+            top = top_enhancement(b)
+            if top is None:
+                return (0, datetime.min.replace(tzinfo=timezone.utc))
+            return (top[1]["rep_priority"],
+                    top[1]["_max_upd_dt"] or datetime.min.replace(tzinfo=timezone.utc))
+        built.sort(key=sort_key, reverse=True)
+
+    if args.json:
+        print(to_json(built, idle_dates))
+        return
+
+    color = (not args.no_color) and sys.stdout.isatty() and not args.json
+    paint = Painter(color)
+    width = get_terminal_size((120, 24)).columns
+
+    if multi:
+        print(render_multi(built, paint, width, idle_dates))
+    else:
+        b = built[0]
+        print(render_single(b, paint, idle_dates.get(b["id"])))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except RuntimeError as e:
+        die(str(e), 3)
+    except BrokenPipeError:
+        sys.exit(0)

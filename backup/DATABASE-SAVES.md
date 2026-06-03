@@ -26,9 +26,9 @@ backup-projects-data.sh
     └── Monthly backups (first Saturday)
     ↓
 3. ROTATION PHASE: Clean old backups
-    ├── Keep last 7 daily
-    ├── Keep last 4 weekly
-    └── Keep last 6 monthly
+    ├── Keep last 3 daily
+    ├── Keep last 1 weekly  (hardlink to that Saturday's daily; zero extra disk)
+    └── Keep last 1 monthly (hardlink to first-Saturday's daily; zero extra disk)
 ```
 
 ## Database Save Scripts

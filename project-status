@@ -1,0 +1,637 @@
+#!/usr/bin/env python3
+"""project-status — executive resume briefing for the current project.
+
+Answers "where was I in this project last time, and what's the next move?" by
+fusing four sources into one page:
+  - claude session transcripts  (~/.claude/projects/-<encoded-path>/*.jsonl)
+  - git activity                (log / status / diff over a recency window)
+  - GitLab cards                (delegated to the sibling `gitlab-status` CLI)
+  - existing docs/context        (requirements.md / architecture.md excerpts)
+
+This is the DETERMINISTIC engine. It is offline-safe, cron-safe, and emits a
+complete briefing on its own. Richer per-session narrative ("LLM by default")
+is layered on top by the calling agent via the /project-status skill, which
+reads `--json` and rewrites the prose — the engine never calls an LLM itself.
+
+Companion: gitlab-status (board state) · context-save (reconstruction docs).
+Design spec: ~/.claude/skills/project-status/SPEC.md
+Depends on: git, optionally the sibling `gitlab-status` script. No pip deps.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timedelta, timezone
+from shutil import get_terminal_size
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_HOME = os.path.expanduser("~")
+DEFAULT_SINCE = "2w"
+DEFAULT_SESSIONS = 5
+
+
+# ── small utilities ─────────────────────────────────────────────────────────
+
+def die(msg: str, code: int = 1) -> "NoReturn":  # type: ignore[name-defined]
+    print(f"project-status: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def run(cmd: list[str], cwd: str | None = None, timeout: int = 30) -> str:
+    """Run a command, return stdout (stripped). Empty string on any failure."""
+    try:
+        proc = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def parse_since(s: str) -> timedelta:
+    """'2w' '30d' '2m' '12h' -> timedelta. Defaults to weeks if bare number."""
+    m = re.fullmatch(r"\s*(\d+)\s*([hdwmy]?)\s*", s or "", re.I)
+    if not m:
+        return timedelta(weeks=2)
+    n = int(m.group(1))
+    unit = (m.group(2) or "w").lower()
+    return {
+        "h": timedelta(hours=n),
+        "d": timedelta(days=n),
+        "w": timedelta(weeks=n),
+        "m": timedelta(days=30 * n),
+        "y": timedelta(days=365 * n),
+    }[unit]
+
+
+def git_since_arg(s: str) -> str:
+    """Translate our since token into a `git log --since=` value."""
+    m = re.fullmatch(r"\s*(\d+)\s*([hdwmy]?)\s*", s or "", re.I)
+    if not m:
+        return "2 weeks ago"
+    n, unit = int(m.group(1)), (m.group(2) or "w").lower()
+    word = {"h": "hours", "d": "days", "w": "weeks", "m": "months", "y": "years"}[unit]
+    return f"{n} {word} ago"
+
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def ago(dt: datetime) -> str:
+    secs = (now_utc() - dt).total_seconds()
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
+
+
+def parse_ts(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+# ── colour ──────────────────────────────────────────────────────────────────
+
+class C:
+    def __init__(self, on: bool):
+        self.on = on
+
+    def __call__(self, code: str, text: str) -> str:
+        return f"\033[{code}m{text}\033[0m" if self.on else text
+
+    def bold(self, t): return self("1", t)
+    def dim(self, t): return self("2", t)
+    def cyan(self, t): return self("36", t)
+    def green(self, t): return self("32", t)
+    def yellow(self, t): return self("33", t)
+
+
+# ── project identity ────────────────────────────────────────────────────────
+
+def project_identity(start: str) -> dict:
+    root = run(["git", "rev-parse", "--show-toplevel"], cwd=start) or os.path.abspath(start)
+    name = os.path.basename(root.rstrip("/")) or root
+    remote = run(["git", "remote", "get-url", "origin"], cwd=root)
+    slug = ""
+    if remote:
+        m = re.search(r"[:/]([\w.\-]+/[\w.\-]+?)(?:\.git)?/?$", remote)
+        if m:
+            slug = m.group(1)
+    branch = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
+    return {"root": root, "name": name, "slug": slug, "branch": branch, "remote": remote}
+
+
+# ── git activity ────────────────────────────────────────────────────────────
+
+def git_activity(root: str, since: str) -> dict:
+    gsince = git_since_arg(since)
+    log = run(["git", "log", f"--since={gsince}", "--pretty=%h\t%s\t%an\t%ar", "-100"], cwd=root)
+    commits = []
+    for ln in log.splitlines():
+        parts = ln.split("\t")
+        if len(parts) >= 4:
+            commits.append({"hash": parts[0], "subject": parts[1],
+                            "author": parts[2], "when": parts[3]})
+    porcelain = run(["git", "status", "--porcelain"], cwd=root)
+    dirty = [ln for ln in porcelain.splitlines() if ln.strip()]
+    # file churn over the window
+    names = run(["git", "log", f"--since={gsince}", "--name-only", "--pretty=format:"], cwd=root)
+    freq: dict[str, int] = {}
+    for ln in names.splitlines():
+        ln = ln.strip()
+        if ln:
+            freq[ln] = freq.get(ln, 0) + 1
+    hot = sorted(freq.items(), key=lambda kv: (-kv[1], kv[0]))[:8]
+    return {"commits": commits, "dirty": dirty, "hot_files": hot}
+
+
+# ── GitLab cards (delegate to sibling gitlab-status) ─────────────────────────
+
+def gitlab_section(root: str) -> dict:
+    binp = os.path.join(_SCRIPT_DIR, "gitlab-status")
+    if not os.path.isfile(binp):
+        binp = "gitlab-status"
+    try:
+        proc = subprocess.run(
+            [binp, "--no-color"], cwd=root,
+            capture_output=True, text=True, timeout=45,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {"ok": False, "text": "", "reason": "gitlab-status unavailable"}
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        reason = (proc.stderr or "").strip().splitlines()
+        return {"ok": False, "text": "",
+                "reason": (reason[0] if reason else "gitlab-status returned nothing")}
+    return {"ok": True, "text": out, "reason": ""}
+
+
+def next_move_from_gitlab(text: str) -> str | None:
+    """Pull the most actionable line out of the gitlab-status output."""
+    priorities = ["awaiting approval", "awaiting your call", "decision",
+                  "in progress", "EXECUTE next", "ready"]
+    for pat in priorities:
+        for ln in text.splitlines():
+            if pat.lower() in ln.lower():
+                return ln.strip()
+    return None
+
+
+# ── docs/context excerpts ────────────────────────────────────────────────────
+
+def _section(md: str, *titles: str) -> str:
+    """Return the body of the first heading whose text contains any title (ci)."""
+    lines = md.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith("#") and any(t.lower() in ln.lower() for t in titles):
+            body = []
+            for nxt in lines[i + 1:]:
+                if nxt.lstrip().startswith("#"):
+                    break
+                body.append(nxt)
+            return "\n".join(body).strip()
+    return ""
+
+
+def docs_excerpts(root: str) -> dict:
+    out = {}
+    base = os.path.join(root, "docs", "context")
+    for fname, keys in (
+        ("requirements.md", ("planned", "in flight", "current", "next")),
+        ("architecture.md", ("current state", "status", "in flight")),
+    ):
+        p = os.path.join(base, fname)
+        if os.path.isfile(p):
+            try:
+                md = open(p, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            for k in keys:
+                sec = _section(md, k)
+                if sec:
+                    out[f"{fname}:{k}"] = sec[:800]
+                    break
+    return out
+
+
+# ── code TODOs ───────────────────────────────────────────────────────────────
+
+def code_todos(root: str, limit: int = 20) -> list[str]:
+    # Prefer ripgrep if available (respects .gitignore); fall back to grep.
+    rg = run(["rg", "-n", "--no-heading", "-S",
+              "-g", "*.{py,js,ts,tsx,jsx,sh,go,rs,md}",
+              r"\b(TODO|FIXME|XXX)\b", root], timeout=20)
+    if not rg:
+        rg = run(["grep", "-rnI", "--include=*.py", "--include=*.js",
+                  "--include=*.ts", "--include=*.sh", "--include=*.md",
+                  "-E", r"\b(TODO|FIXME|XXX)\b", root], timeout=20)
+    todos = []
+    for ln in rg.splitlines():
+        ln = ln.replace(root + "/", "")
+        # skip this very pattern living in tooling/docs noise
+        if "project-status" in ln and "TODO|FIXME" in ln:
+            continue
+        todos.append(ln.strip())
+        if len(todos) >= limit:
+            break
+    return todos
+
+
+# ── transcript scanning ──────────────────────────────────────────────────────
+
+def transcript_dir(root: str) -> str:
+    """Claude Code encodes a project path by replacing every '/' and '.' with '-'."""
+    encoded = re.sub(r"[/.]", "-", os.path.abspath(root))
+    return os.path.join(_HOME, ".claude", "projects", encoded)
+
+
+_SKIP_PREFIX = (
+    "<", "stop hook feedback:", "caveat:", "[request interrupted",
+    "this session is being continued", "api error", "please continue",
+)
+_SKIP_CONTAINS = (
+    "<command-name>", "<local-command-stdout>", "<system-reminder>",
+    "do not respond to these", "deferred tools",
+)
+
+
+def _user_text(obj: dict) -> str | None:
+    if obj.get("type") != "user":
+        return None
+    c = obj.get("message", {}).get("content")
+    if isinstance(c, str):
+        txt = c
+    elif isinstance(c, list):
+        txt = " ".join(it.get("text", "") for it in c
+                       if isinstance(it, dict) and it.get("type") == "text")
+    else:
+        return None
+    txt = (txt or "").strip()
+    if not txt:
+        return None
+    low = txt.lower()
+    if low.startswith(_SKIP_PREFIX):
+        return None
+    if any(s in low for s in _SKIP_CONTAINS):
+        return None
+    # pasted terminal output / shell prompts aren't a meaningful "task"
+    if re.search(r"\w+@[\w.\-]+:[^\n]*\$", txt) or txt.startswith("Error:"):
+        return None
+    return txt
+
+
+def _assistant_text(obj: dict) -> str | None:
+    if obj.get("type") != "assistant":
+        return None
+    parts = [it.get("text", "") for it in obj.get("message", {}).get("content", [])
+             if isinstance(it, dict) and it.get("type") == "text"]
+    txt = " ".join(p for p in parts if p).strip()
+    return txt or None
+
+
+def _tool_uses(obj: dict):
+    if obj.get("type") != "assistant":
+        return
+    for it in obj.get("message", {}).get("content", []):
+        if isinstance(it, dict) and it.get("type") == "tool_use":
+            yield it.get("name"), (it.get("input") or {})
+
+
+_COMMIT_MSG_RE = re.compile(r"git commit\b[^\n]*?-m\s+(['\"])(.+?)\1", re.S)
+
+
+def scan_session(path: str) -> dict:
+    first_user = last_user = last_assistant = None
+    turns = 0
+    files: dict[str, int] = {}
+    skills: list[str] = []
+    commit_msgs: list[str] = []
+    commit_count = 0
+    branch = cwd = None
+    first_ts = last_ts = None
+
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for raw in fh:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                obj = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            ts = parse_ts(obj.get("timestamp"))
+            if ts:
+                first_ts = first_ts or ts
+                last_ts = ts
+            branch = obj.get("gitBranch") or branch
+            cwd = obj.get("cwd") or cwd
+
+            ut = _user_text(obj)
+            if ut:
+                turns += 1
+                if first_user is None:
+                    first_user = ut
+                last_user = ut
+                continue
+
+            at = _assistant_text(obj)
+            if at:
+                last_assistant = at
+
+            for name, inp in _tool_uses(obj):
+                if name in ("Edit", "Write") and inp.get("file_path"):
+                    fp = inp["file_path"]
+                    files[fp] = files.get(fp, 0) + 1
+                elif name == "Skill" and inp.get("skill"):
+                    skills.append(inp["skill"])
+                elif name == "Bash":
+                    cmd = inp.get("command", "")
+                    if "git commit" in cmd:
+                        commit_count += cmd.count("git commit")
+                        for _, msg in _COMMIT_MSG_RE.findall(cmd):
+                            commit_msgs.append(msg.strip().splitlines()[0])
+
+    def trim(s, n=240):
+        s = re.sub(r"\s+", " ", s or "").strip()
+        return s[:n] + ("…" if len(s) > n else "")
+
+    top_files = sorted(files.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {
+        "file": os.path.basename(path),
+        "session_id": os.path.basename(path).replace(".jsonl", ""),
+        "start": first_ts.isoformat() if first_ts else None,
+        "end": last_ts.isoformat() if last_ts else None,
+        "mtime": os.path.getmtime(path),
+        "turns": turns,
+        "first_user": trim(first_user, 200),
+        "last_user": trim(last_user, 200),
+        "last_assistant": trim(last_assistant, 320),
+        "files_touched": len(files),
+        "top_files": [f for f, _ in top_files[:6]],
+        "commit_count": commit_count,
+        "commit_msgs": commit_msgs[:6],
+        "skills": list(dict.fromkeys(skills)),
+        "branch": branch,
+        "cwd": cwd,
+    }
+
+
+def transcript_sessions(paths: list[str], since: str, k: int) -> dict:
+    # Claude keys transcripts by the actual cwd, which may be a subdir of the
+    # git root — scan every distinct candidate path and merge.
+    dirs = list(dict.fromkeys(transcript_dir(p) for p in paths))
+    files: list[str] = []
+    for d in dirs:
+        if os.path.isdir(d):
+            files += [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".jsonl")]
+    if not files:
+        return {"dir": dirs[0], "found": False, "sessions": []}
+    files.sort(key=os.path.getmtime, reverse=True)
+    cutoff = (now_utc() - parse_since(since)).timestamp()
+    in_window = [f for f in files if os.path.getmtime(f) >= cutoff]
+    # Always show at least the most recent session, even if it predates the window.
+    chosen = (in_window or files[:1])[:k]
+    sessions = []
+    for f in chosen:
+        try:
+            sessions.append(scan_session(f))
+        except OSError:
+            continue
+    sessions.sort(key=lambda s: s["mtime"])  # oldest -> newest
+    return {"dir": dirs[0], "found": True, "sessions": sessions,
+            "total_files": len(files), "in_window": len(in_window)}
+
+
+# ── gather everything ────────────────────────────────────────────────────────
+
+def gather(start: str, since: str, sessions: int) -> dict:
+    ident = project_identity(start)
+    root = ident["root"]
+    data = {
+        "generated": now_utc().isoformat(),
+        "since": since,
+        "identity": ident,
+        "git": git_activity(root, since),
+        "gitlab": gitlab_section(root),
+        "docs": docs_excerpts(root),
+        "todos": code_todos(root),
+        "transcripts": transcript_sessions([start, root], since, sessions),
+    }
+    gl = data["gitlab"]
+    nxt = next_move_from_gitlab(gl["text"]) if gl["ok"] else None
+    if not nxt and data["transcripts"]["sessions"]:
+        last = data["transcripts"]["sessions"][-1]
+        nxt = f"resume from last session — {last['last_user'] or last['first_user']}"
+    data["next_move"] = nxt or "no clear signal; review RECENT SESSIONS below"
+    return data
+
+
+# ── render ───────────────────────────────────────────────────────────────────
+
+def render(data: dict, color: bool) -> str:
+    c = C(color)
+    width = min(get_terminal_size((80, 24)).columns, 78)
+    bar = "═" * width
+    ident = data["identity"]
+    gen = parse_ts(data["generated"])
+    stamp = gen.astimezone().strftime("%Y-%m-%d %H:%M") if gen else "?"
+    out: list[str] = []
+
+    out.append(c.cyan(bar))
+    title = f"  {ident['name']} — Project Status"
+    sub = f"(refreshed {stamp})"
+    out.append(c.bold(title) + "  " + c.dim(sub))
+    if ident["slug"]:
+        out.append(c.dim(f"  {ident['slug']}  ·  branch {ident['branch']}"))
+    out.append(c.cyan(bar))
+    out.append("")
+
+    # IN FLIGHT (gitlab cards)
+    out.append(c.yellow("▸ IN FLIGHT"))
+    gl = data["gitlab"]
+    if gl["ok"]:
+        for ln in gl["text"].splitlines():
+            out.append("  " + ln)
+    else:
+        out.append(c.dim(f"  (cards unavailable: {gl['reason']})"))
+    out.append("")
+
+    # RECENT SESSIONS
+    tr = data["transcripts"]
+    out.append(c.yellow(f"▸ RECENT SESSIONS  ({len(tr['sessions'])} shown, oldest → newest)"))
+    if not tr["found"]:
+        out.append(c.dim("  (no claude transcripts for this project path)"))
+    elif not tr["sessions"]:
+        out.append(c.dim("  (none within the recency window)"))
+    else:
+        for s in tr["sessions"]:
+            st = parse_ts(s["start"])
+            datestr = st.astimezone().strftime("%Y-%m-%d") if st else "????-??-??"
+            head = s["first_user"] or "(no opening prompt captured)"
+            out.append(f"  {c.green(datestr)}  {head}")
+            meta = f"{s['turns']} turns · {s['files_touched']} files · {s['commit_count']} commits"
+            if s["skills"]:
+                meta += " · skills: " + ", ".join(s["skills"][:4])
+            out.append(c.dim(f"              {meta}"))
+            if s["last_user"] and s["last_user"] != s["first_user"]:
+                out.append(c.dim(f"              ↳ ended on: {s['last_user']}"))
+    out.append("")
+
+    # RECENT COMMITS
+    out.append(c.yellow("▸ RECENT COMMITS"))
+    commits = data["git"]["commits"]
+    if commits:
+        for cm in commits[:8]:
+            out.append(f"  {c.green(cm['hash'])}  {cm['subject']}  {c.dim(cm['when'])}")
+    else:
+        out.append(c.dim(f"  (no commits in the last {data['since']})"))
+    dirty = data["git"]["dirty"]
+    if dirty:
+        out.append(c.dim(f"  + {len(dirty)} uncommitted change(s) in the working tree"))
+    out.append("")
+
+    # DOCS / CONTEXT
+    if data["docs"]:
+        out.append(c.yellow("▸ FROM docs/context"))
+        for key, body in data["docs"].items():
+            out.append(c.dim(f"  [{key}]"))
+            for ln in body.splitlines()[:6]:
+                out.append("  " + ln)
+        out.append("")
+
+    # OPEN TODOs
+    out.append(c.yellow("▸ OPEN TODOs"))
+    if data["todos"]:
+        for t in data["todos"][:10]:
+            out.append("  " + t)
+        if len(data["todos"]) > 10:
+            out.append(c.dim(f"  … +{len(data['todos']) - 10} more"))
+    else:
+        out.append(c.dim("  (none found in code)"))
+    out.append("")
+
+    # NEXT MOVE
+    out.append(c.yellow("▸ NEXT MOVE"))
+    out.append("  " + c.bold(data["next_move"]))
+    out.append("")
+    out.append(c.cyan(bar))
+    return "\n".join(out)
+
+
+# ── storage ──────────────────────────────────────────────────────────────────
+
+BRIEFING_REL = os.path.join("docs", "project-status.md")
+
+
+def briefing_path(root: str) -> str:
+    return os.path.join(root, BRIEFING_REL)
+
+
+def strip_ansi(s: str) -> str:
+    return re.sub(r"\033\[[0-9;]*m", "", s)
+
+
+def ensure_gitignored(root: str) -> None:
+    gi = os.path.join(root, ".gitignore")
+    entry = "docs/project-status.md"
+    existing = ""
+    if os.path.isfile(gi):
+        existing = open(gi, encoding="utf-8", errors="replace").read()
+        if entry in existing:
+            return
+    with open(gi, "a", encoding="utf-8") as fh:
+        if existing and not existing.endswith("\n"):
+            fh.write("\n")
+        fh.write(f"# auto-generated resume briefing (project-status skill)\n{entry}\n")
+
+
+def write_briefing(data: dict, rendered_plain: str) -> str:
+    root = data["identity"]["root"]
+    os.makedirs(os.path.join(root, "docs"), exist_ok=True)
+    ensure_gitignored(root)
+    ident = data["identity"]
+    fm = (
+        "---\n"
+        f"name: project-status-{ident['name']}\n"
+        "description: Auto-generated project resume briefing. Refresh with /project-status.\n"
+        "metadata:\n"
+        "  type: project-status\n"
+        f"  refreshed: {data['generated']}\n"
+        f"  project_path: {root}\n"
+        f"  gitlab_repo: {ident['slug'] or '(none)'}\n"
+        "---\n\n"
+    )
+    body = "```\n" + rendered_plain + "\n```\n"
+    path = briefing_path(root)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(fm + body)
+    os.replace(tmp, path)
+    return path
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        prog="project-status",
+        description="Executive resume briefing for the current project.",
+    )
+    ap.add_argument("--read", action="store_true",
+                    help="print the last saved briefing without regenerating")
+    ap.add_argument("--since", default=DEFAULT_SINCE,
+                    help=f"recency window for git + transcripts (default {DEFAULT_SINCE}; e.g. 4w, 30d)")
+    ap.add_argument("--sessions", type=int, default=DEFAULT_SESSIONS,
+                    help=f"max recent claude sessions to summarize (default {DEFAULT_SESSIONS})")
+    ap.add_argument("--json", action="store_true",
+                    help="emit gathered data as JSON (consumed by the skill's LLM layer)")
+    ap.add_argument("--no-color", action="store_true", help="disable ANSI colour")
+    # Accepted for the skill's argument surface; the engine is always deterministic.
+    ap.add_argument("--no-llm", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--llm", action="store_true", help=argparse.SUPPRESS)
+    args = ap.parse_args()
+
+    start = os.getcwd()
+
+    if args.read:
+        ident = project_identity(start)
+        path = briefing_path(ident["root"])
+        if not os.path.isfile(path):
+            die(f"no saved briefing at {path} — run `project-status` to generate one.", 2)
+        sys.stdout.write(open(path, encoding="utf-8").read())
+        return 0
+
+    color = sys.stdout.isatty() and not args.no_color
+    data = gather(start, args.since, args.sessions)
+
+    if args.json:
+        json.dump(data, sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+        return 0
+
+    rendered = render(data, color)
+    plain = strip_ansi(rendered) if color else rendered
+    path = write_briefing(data, plain)
+    print(rendered)
+    print(C(color).dim(f"\nsaved → {path}"))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

@@ -206,58 +206,56 @@ for USERNAME in "${USERS[@]}"; do
         echo -e "${YELLOW}    ⊙ Daily backup already exists${NC}"
     fi
 
-    # 2. WEEKLY BACKUP (Saturdays only)
+    # 2. WEEKLY BACKUP (Saturdays only) — hardlink-promote today's daily.
+    # The weekly is a second name for the same inode as the daily; consumes 0
+    # extra bytes. When the daily rotates out, the weekly link keeps the data
+    # alive until weekly rotation drops it. Requires daily and weekly to live
+    # on the same filesystem (both are under $BACKUP_DIR on /mnt/backup).
     if [ "$IS_SATURDAY" = true ]; then
         WEEKLY_FILE="$BACKUP_DIR/${PROJECT_NAME}-weekly-${TODAY}.tar.gz"
         if [ ! -f "$WEEKLY_FILE" ]; then
-            echo -e "${GREEN}  → Creating weekly backup...${NC}"
-            tar -czf "$WEEKLY_FILE" -C "$USER_HOME/projects" \
-                --exclude='data/netdata/cache/*.db*' \
-                --exclude='data/volume-backups/*' \
-                --exclude='data/mongodb/journal/*' \
-                --exclude='data/gitlab/logs/*.log' \
-                "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE" || true
-            if [ -s "$WEEKLY_FILE" ] \
-               && gzip -t "$WEEKLY_FILE" 2>/dev/null \
-               && tar -tzf "$WEEKLY_FILE" >/dev/null 2>&1; then
-                BACKUP_SIZE=$(du -sh "$WEEKLY_FILE" | cut -f1)
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - WEEKLY - Created: $(basename "$WEEKLY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
-                echo -e "${GREEN}    ✓ Weekly backup created: $BACKUP_SIZE${NC}"
-                BACKUPS_CREATED=$((BACKUPS_CREATED + 1))
-                chown "$USERNAME:$USER_GROUP" "$WEEKLY_FILE"
+            if [ -f "$DAILY_FILE" ]; then
+                echo -e "${GREEN}  → Promoting today's daily to weekly (hardlink)...${NC}"
+                if ln "$DAILY_FILE" "$WEEKLY_FILE"; then
+                    BACKUP_SIZE=$(du -sh "$WEEKLY_FILE" | cut -f1)
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') - WEEKLY - Linked: $(basename "$WEEKLY_FILE") -> $(basename "$DAILY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
+                    echo -e "${GREEN}    ✓ Weekly hardlink created (0 extra bytes): $BACKUP_SIZE${NC}"
+                    BACKUPS_CREATED=$((BACKUPS_CREATED + 1))
+                    chown "$USERNAME:$USER_GROUP" "$WEEKLY_FILE"
+                else
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Weekly hardlink failed (ln) — check that daily and weekly are on the same filesystem" >> "$LOG_FILE"
+                    echo -e "${RED}    ✗ Weekly hardlink failed${NC}"
+                fi
             else
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Weekly archive missing or fails gzip/tar verify; quarantining as .failed" >> "$LOG_FILE"
-                echo -e "${RED}    ✗ Weekly archive failed verification; quarantining as .failed${NC}"
-                mv -f "$WEEKLY_FILE" "${WEEKLY_FILE}.failed.$(date +%s)" 2>/dev/null || rm -f "$WEEKLY_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Weekly skipped: today's daily is missing (daily run failed earlier)" >> "$LOG_FILE"
+                echo -e "${RED}    ✗ Weekly skipped: no daily to promote${NC}"
             fi
         else
             echo -e "${YELLOW}    ⊙ Weekly backup already exists${NC}"
         fi
     fi
 
-    # 3. MONTHLY BACKUP (First Saturday only)
+    # 3. MONTHLY BACKUP (First Saturday only) — hardlink-promote today's daily.
+    # Same rationale as weekly: zero extra bytes; data persists across daily
+    # rotation via the surviving link.
     if [ "$IS_FIRST_SATURDAY" = true ]; then
         MONTHLY_FILE="$BACKUP_DIR/${PROJECT_NAME}-monthly-${TODAY}.tar.gz"
         if [ ! -f "$MONTHLY_FILE" ]; then
-            echo -e "${GREEN}  → Creating monthly backup...${NC}"
-            tar -czf "$MONTHLY_FILE" -C "$USER_HOME/projects" \
-                --exclude='data/netdata/cache/*.db*' \
-                --exclude='data/volume-backups/*' \
-                --exclude='data/mongodb/journal/*' \
-                --exclude='data/gitlab/logs/*.log' \
-                "$PROJECT_NAME" 2>&1 | tee -a "$LOG_FILE" || true
-            if [ -s "$MONTHLY_FILE" ] \
-               && gzip -t "$MONTHLY_FILE" 2>/dev/null \
-               && tar -tzf "$MONTHLY_FILE" >/dev/null 2>&1; then
-                BACKUP_SIZE=$(du -sh "$MONTHLY_FILE" | cut -f1)
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - MONTHLY - Created: $(basename "$MONTHLY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
-                echo -e "${GREEN}    ✓ Monthly backup created: $BACKUP_SIZE${NC}"
-                BACKUPS_CREATED=$((BACKUPS_CREATED + 1))
-                chown "$USERNAME:$USER_GROUP" "$MONTHLY_FILE"
+            if [ -f "$DAILY_FILE" ]; then
+                echo -e "${GREEN}  → Promoting today's daily to monthly (hardlink)...${NC}"
+                if ln "$DAILY_FILE" "$MONTHLY_FILE"; then
+                    BACKUP_SIZE=$(du -sh "$MONTHLY_FILE" | cut -f1)
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') - MONTHLY - Linked: $(basename "$MONTHLY_FILE") -> $(basename "$DAILY_FILE") ($BACKUP_SIZE)" >> "$LOG_FILE"
+                    echo -e "${GREEN}    ✓ Monthly hardlink created (0 extra bytes): $BACKUP_SIZE${NC}"
+                    BACKUPS_CREATED=$((BACKUPS_CREATED + 1))
+                    chown "$USERNAME:$USER_GROUP" "$MONTHLY_FILE"
+                else
+                    echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Monthly hardlink failed (ln) — check that daily and monthly are on the same filesystem" >> "$LOG_FILE"
+                    echo -e "${RED}    ✗ Monthly hardlink failed${NC}"
+                fi
             else
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Monthly archive missing or fails gzip/tar verify; quarantining as .failed" >> "$LOG_FILE"
-                echo -e "${RED}    ✗ Monthly archive failed verification; quarantining as .failed${NC}"
-                mv -f "$MONTHLY_FILE" "${MONTHLY_FILE}.failed.$(date +%s)" 2>/dev/null || rm -f "$MONTHLY_FILE"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - ERROR - Monthly skipped: today's daily is missing (daily run failed earlier)" >> "$LOG_FILE"
+                echo -e "${RED}    ✗ Monthly skipped: no daily to promote${NC}"
             fi
         else
             echo -e "${YELLOW}    ⊙ Monthly backup already exists${NC}"

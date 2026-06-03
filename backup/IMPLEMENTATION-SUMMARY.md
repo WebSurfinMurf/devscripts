@@ -35,19 +35,19 @@ export BACKUPS="$BACKUPROOT/$USER"                     # Per-user root
 - ✅ Skips users without `data` directory (no failure)
 - ✅ Proper file ownership (each user owns their backups)
 
-**Retention Policy:**
+**Retention Policy** (authoritative source: top of `backup-projects-data.sh`):
 | Type | Kept | When Created | Filename Pattern |
 |------|------|--------------|------------------|
-| Daily | 7 | Every run | `data-daily-YYYY-MM-DD.tar.gz` |
-| Weekly | 4 | Saturdays | `data-weekly-YYYY-MM-DD.tar.gz` |
-| Monthly | 6 | 1st Saturday | `data-monthly-YYYY-MM-DD.tar.gz` |
+| Daily | 3 | Every run | `data-daily-YYYY-MM-DD.tar.gz` |
+| Weekly | 1 | Saturdays | `data-weekly-YYYY-MM-DD.tar.gz` |
+| Monthly | 1 | 1st Saturday | `data-monthly-YYYY-MM-DD.tar.gz` |
 
 **Backup Logic:**
 1. Check if `~/projects/data/` exists → Skip if not
-2. Create daily backup (always)
-3. Create weekly backup (if Saturday)
-4. Create monthly backup (if 1st Saturday of month)
-5. Rotate old backups (delete excess beyond retention)
+2. Create daily backup (always) — stage to NVMe, verify, copy to USB
+3. Promote daily to weekly via hardlink (if Saturday) — `ln daily weekly`, zero extra bytes
+4. Promote daily to monthly via hardlink (if 1st Saturday of month) — same pattern
+5. Rotate old backups (delete excess beyond retention; underlying data persists as long as any hardlink survives)
 6. Log everything to `$BACKUPS/backup.log`
 
 ### 3. Cron Job System
@@ -73,23 +73,11 @@ export BACKUPS="$BACKUPROOT/$USER"                     # Per-user root
     ├── backup.log                                    # User's comprehensive log
     └── projects/
         └── data/
-            ├── data-daily-2025-11-10.tar.gz         # Today
-            ├── data-daily-2025-11-09.tar.gz
-            ├── data-daily-2025-11-08.tar.gz
-            ├── data-daily-2025-11-07.tar.gz
-            ├── data-daily-2025-11-06.tar.gz
-            ├── data-daily-2025-11-05.tar.gz
-            ├── data-daily-2025-11-04.tar.gz         # 7 daily total
-            ├── data-weekly-2025-11-09.tar.gz        # Last Saturday
-            ├── data-weekly-2025-11-02.tar.gz
-            ├── data-weekly-2025-10-26.tar.gz
-            ├── data-weekly-2025-10-19.tar.gz        # 4 weekly total
-            ├── data-monthly-2025-11-02.tar.gz       # 1st Sat Nov
-            ├── data-monthly-2025-10-05.tar.gz
-            ├── data-monthly-2025-09-07.tar.gz
-            ├── data-monthly-2025-08-03.tar.gz
-            ├── data-monthly-2025-07-06.tar.gz
-            └── data-monthly-2025-06-07.tar.gz       # 6 monthly total
+            ├── data-daily-2026-05-30.tar.gz         # Today
+            ├── data-daily-2026-05-29.tar.gz
+            ├── data-daily-2026-05-28.tar.gz         # 3 daily total
+            ├── data-weekly-2026-05-23.tar.gz        # 1 weekly (hardlinked to the daily it was promoted from, until that daily rotates out)
+            └── data-monthly-2026-05-02.tar.gz       # 1 monthly (same hardlink mechanic)
 ```
 
 ## Testing Steps
@@ -196,11 +184,11 @@ sudo cat /etc/cron.d/backup-projects
 
 ## Storage Estimates
 
-**Per-User Estimates (administrator with 3GB data):**
-- Source: `~/projects/data/` = 3.0GB
-- Compressed (tar.gz): ~1.0GB (70% compression typical)
-- Max backups: 7 daily + 4 weekly + 6 monthly = 17 backups
-- Max storage: ~17GB per user
+**Per-User Estimates (administrator with current ~95 GB data):**
+- Source: `~/projects/data/` ≈ 95 GB
+- Compressed (tar.gz): ~81 GB (~85% retained)
+- Retention: 3 daily + 1 weekly + 1 monthly = up to 5 inodes, weekly/monthly often hardlinked into a daily so real disk is 3–5 inodes' worth
+- Max real storage per user: ~5 × 81 GB ≈ 405 GB worst case; typical ~243–324 GB
 
 **Total for 4 Users:**
 - If all users have 3GB data: ~68GB total
@@ -290,10 +278,10 @@ du -sh $BACKUPS/projects/data/*.tar.gz
 # Count daily backups (should be max 7)
 ls -1 $BACKUPS/projects/data/data-daily-*.tar.gz | wc -l
 
-# Count weekly backups (should be max 4)
+# Count weekly backups (should be max 1)
 ls -1 $BACKUPS/projects/data/data-weekly-*.tar.gz | wc -l
 
-# Count monthly backups (should be max 6)
+# Count monthly backups (should be max 1)
 ls -1 $BACKUPS/projects/data/data-monthly-*.tar.gz | wc -l
 ```
 

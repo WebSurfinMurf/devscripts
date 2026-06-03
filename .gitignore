@@ -49,3 +49,5 @@ Thumbs.db
 __pycache__/
 *.pyc
 .cache/
+# auto-generated resume briefing (project-status skill)
+docs/project-status.md
