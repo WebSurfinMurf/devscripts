@@ -181,18 +181,38 @@ fi
 
 # --- Decide whether to resume ---
 # Claude Code stores per-cwd sessions in ~/.claude/projects/<encoded-cwd>/*.jsonl
-# where encoded-cwd is the absolute path with `/` replaced by `-`.
-CONTINUE_FLAG=""
+# where encoded-cwd is the absolute REAL path with `/` and `.` both replaced by `-`
+# (verified: /tmp/tmp.AbCd -> -tmp-tmp-AbCd).
+#
+# We do NOT use `claude --continue` (which blindly grabs the absolute-most-recent
+# session and can't be told to skip anything). Instead we pick the most recent
+# session whose id is NOT in the skip list, and resume it by explicit id. This
+# lets autonomous /refocus workers mark themselves (~/.claude/claudeauto-skip) so
+# they don't hijack auto-resume; they stay manually resumable via `claude --resume <id>`.
+SKIP_LIST="$HOME/.claude/claudeauto-skip"
+RESUME_FLAG=""
 if [ "$RESUME" = true ]; then
-  ENCODED_CWD=$(pwd | sed 's|/|-|g')
+  ENCODED_CWD=$(pwd -P | sed 's|[/.]|-|g')
   SESSION_DIR="$HOME/.claude/projects/${ENCODED_CWD}"
+  RESUME_ID=""
   if compgen -G "$SESSION_DIR/*.jsonl" > /dev/null 2>&1; then
-    CONTINUE_FLAG="--continue"
-    echo "[claudeauto] Resuming previous session in $(pwd)"
+    # newest-first; first session id not present in the skip list wins
+    while IFS= read -r f; do
+      sid=$(basename "$f" .jsonl)
+      if [ -f "$SKIP_LIST" ] && grep -qxF "$sid" "$SKIP_LIST"; then
+        continue   # autonomous worker / marked session -> skip
+      fi
+      RESUME_ID="$sid"
+      break
+    done < <(ls -t "$SESSION_DIR"/*.jsonl 2>/dev/null)
+  fi
+  if [ -n "$RESUME_ID" ]; then
+    RESUME_FLAG="--resume $RESUME_ID"
+    echo "[claudeauto] Resuming session $RESUME_ID in $(pwd)"
   else
-    echo "[claudeauto] No previous session in $(pwd); starting fresh"
+    echo "[claudeauto] No resumable (unmarked) session in $(pwd); starting fresh"
   fi
 fi
 
 # Launch Claude with full auto mode (no permission prompts)
-claude $CONTINUE_FLAG --dangerously-skip-permissions --permission-mode bypassPermissions --allow-dangerously-skip-permissions ${PROMPT:+"$PROMPT"}
+claude $RESUME_FLAG --dangerously-skip-permissions --permission-mode bypassPermissions --allow-dangerously-skip-permissions ${PROMPT:+"$PROMPT"}
