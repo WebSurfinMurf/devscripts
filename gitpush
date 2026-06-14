@@ -370,10 +370,11 @@ if [[ "${PROJECT}" == "all" ]]; then
   declare -a AUTH_FAILED_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
-  # === CLAUDE SKILLS REPOS (tracked separately) ===
+  # === CLAUDE SKILLS + OUTPUT-STYLES REPOS (tracked separately) ===
   CLAUDE_SKILLS_DIRS=(
     "${HOME}/.claude/skills"
     "${HOME}/projects/.claude/skills"
+    "${HOME}/.claude/output-styles"
   )
 
   for skills_dir in "${CLAUDE_SKILLS_DIRS[@]}"; do
@@ -381,6 +382,7 @@ if [[ "${PROJECT}" == "all" ]]; then
       skills_name="claude-skills/$(basename $(dirname ${skills_dir}))"
       [[ "${skills_dir}" == "${HOME}/.claude/skills" ]] && skills_name="claude-skills/shared"
       [[ "${skills_dir}" == "${HOME}/projects/.claude/skills" ]] && skills_name="claude-skills/administrators"
+      [[ "${skills_dir}" == "${HOME}/.claude/output-styles" ]] && skills_name="claude-skills/output-styles"
 
       echo "════════════════════════════════════════════════════════════"
       echo "📍 Processing: ${skills_dir} (${skills_name})"
