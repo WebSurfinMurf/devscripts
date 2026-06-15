@@ -221,20 +221,18 @@ if [[ "${PROJECT}" == "all" ]]; then
   declare -a AUTH_FAILED_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
-  # === CLAUDE SKILLS + OUTPUT-STYLES REPOS (tracked separately) ===
-  CLAUDE_SKILLS_DIRS=(
-    "${HOME}/.claude/skills"
-    "${HOME}/projects/.claude/skills"
-    "${HOME}/.claude/output-styles"
-  )
+  # === CLAUDE PLUGIN REPOS (each ~/.claude/skills/<plugin>/ is its own git repo) ===
+  # Auto-discover whatever plugins are cloned on this box (role-agnostic). On a fresh
+  # box, clone the role-appropriate plugins once; gitpull then keeps them in sync.
+  CLAUDE_SKILLS_DIRS=()
+  for _d in "${HOME}"/.claude/skills/*/; do
+    [[ -d "${_d}.git" ]] && CLAUDE_SKILLS_DIRS+=("${_d%/}")
+  done
 
   for skills_dir in "${CLAUDE_SKILLS_DIRS[@]}"; do
     if [[ -d "${skills_dir}/.git" ]]; then
       # Determine display name
-      skills_name="claude-skills/unknown"
-      [[ "${skills_dir}" == "${HOME}/.claude/skills" ]] && skills_name="claude-skills/shared"
-      [[ "${skills_dir}" == "${HOME}/projects/.claude/skills" ]] && skills_name="claude-skills/administrators"
-      [[ "${skills_dir}" == "${HOME}/.claude/output-styles" ]] && skills_name="claude-skills/output-styles"
+      skills_name="claude-skills/$(basename "${skills_dir}")"
 
       echo "════════════════════════════════════════════════════════════"
       echo "📍 Processing: ${skills_dir} (${skills_name})"
