@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail   # Strict mode
 
-# Usage: gitpush <GitHub-project-name|all|.> [release-description]
+# Usage: gitpush <GitHub-project-name|all|skills|.> [release-description]
 # Example: gitpush MyApp "Fixed bug in auth"
 #          gitpush all "Weekly updates"
+#          gitpush skills "Skill tweaks" (push ~/.claude skill collections only)
 #          gitpush . "Quick fix" (uses current directory)
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <GitHub-project-name|all|.> [release-description]"
+  echo "Usage: $0 <GitHub-project-name|all|skills|.> [release-description]"
   echo "  Use 'all' to push all git repositories in projects directory"
+  echo "  Use 'skills' to push only the ~/.claude skill collections"
   echo "  Use '.' to push current directory"
   exit 1
 fi
@@ -358,22 +360,13 @@ push_single_project() {
   echo "🔗 Repository URL: https://github.com/${OWNER}/${project_name}"
 }
 
-# Handle 'all' parameter
-if [[ "${PROJECT}" == "all" ]]; then
-  echo "🔄 Processing all Git repositories in ${BASE_DIR}..."
-  echo ""
-
-  # Initialize tracking arrays
-  declare -a SUCCESS_PROJECTS=()
-  declare -a FAILED_PROJECTS=()
-  declare -a SKIPPED_PROJECTS=()
-  declare -a AUTH_FAILED_PROJECTS=()
-  declare -A FAILURE_REASONS=()
-
-  # === CLAUDE PLUGIN REPOS (each ~/.claude/skills/<plugin>/ is its own git repo) ===
-  # Auto-discover whatever plugins are cloned on this box (role-agnostic: admin box
-  # has claude-shared+claude-admin, dev box has claude-shared+claude-dev). Each repo
-  # name = claude-skills/<dir basename>.
+# Push only the ~/.claude skill collections (each ~/.claude/skills/<plugin>/ is its
+# own GitLab clone under claude-skills/). Auto-discovers whatever plugins are cloned
+# on this box (role-agnostic: admin box has claude-shared+claude-admin, dev box has
+# claude-shared+claude-dev). Appends results to the caller's tracking arrays
+# (SUCCESS_PROJECTS / FAILED_PROJECTS / FAILURE_REASONS), which must be declared
+# before calling. Shared by the 'all' and 'skills' branches.
+push_all_skills() {
   CLAUDE_SKILLS_DIRS=()
   for _d in "${HOME}"/.claude/skills/*/; do
     [[ -d "${_d}.git" ]] && CLAUDE_SKILLS_DIRS+=("${_d%/}")
@@ -408,6 +401,86 @@ if [[ "${PROJECT}" == "all" ]]; then
       fi
     fi
   done
+}
+
+# Print the shared PUSH SUMMARY block from the caller's tracking arrays.
+# Returns 1 if any project failed or needs credentials, else 0.
+print_push_summary() {
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo "📊 PUSH SUMMARY"
+  echo "════════════════════════════════════════════════════════════════"
+  echo ""
+  echo "✅ Successful: ${#SUCCESS_PROJECTS[@]} projects"
+  echo "❌ Failed: ${#FAILED_PROJECTS[@]} projects"
+  echo "🔐 Auth Required: ${#AUTH_FAILED_PROJECTS[@]} projects"
+  echo "⏭️  Skipped: ${#SKIPPED_PROJECTS[@]} projects"
+  echo ""
+
+  # List auth-failed projects
+  if [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]]; then
+    echo "Credentials Required (no SSH key or access):"
+    echo "────────────────────────────────────────────────────────────────"
+    for project in "${AUTH_FAILED_PROJECTS[@]}"; do
+      printf "  🔐 %-30s → %s\n" "${project}" "credentials required"
+    done
+    echo ""
+  fi
+
+  # List failed projects with reasons
+  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]]; then
+    echo "Failed Projects:"
+    echo "────────────────────────────────────────────────────────────────"
+    for project in "${FAILED_PROJECTS[@]}"; do
+      reason="${FAILURE_REASONS[$project]}"
+      printf "  ❌ %-30s → %s\n" "${project}" "${reason}"
+    done
+    echo ""
+  fi
+
+  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]] || [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# Handle 'skills' parameter — push only the ~/.claude skill collections
+if [[ "${PROJECT}" == "skills" ]]; then
+  echo "🔄 Pushing ~/.claude skill collections only..."
+  echo ""
+
+  # Initialize tracking arrays (SKIPPED/AUTH unused here but kept for shared summary)
+  declare -a SUCCESS_PROJECTS=()
+  declare -a FAILED_PROJECTS=()
+  declare -a SKIPPED_PROJECTS=()
+  declare -a AUTH_FAILED_PROJECTS=()
+  declare -A FAILURE_REASONS=()
+
+  push_all_skills
+
+  if print_push_summary; then
+    echo "All skill collections pushed successfully!"
+    echo ""
+    exit 0
+  else
+    exit 1
+  fi
+fi
+
+# Handle 'all' parameter
+if [[ "${PROJECT}" == "all" ]]; then
+  echo "🔄 Processing all Git repositories in ${BASE_DIR}..."
+  echo ""
+
+  # Initialize tracking arrays
+  declare -a SUCCESS_PROJECTS=()
+  declare -a FAILED_PROJECTS=()
+  declare -a SKIPPED_PROJECTS=()
+  declare -a AUTH_FAILED_PROJECTS=()
+  declare -A FAILURE_REASONS=()
+
+  # === CLAUDE PLUGIN REPOS (each ~/.claude/skills/<plugin>/ is its own git repo) ===
+  push_all_skills
 
   # === REGULAR PROJECT REPOS ===
   # Expand .gitgroup containers (see gitpull for semantics).
@@ -497,46 +570,13 @@ if [[ "${PROJECT}" == "all" ]]; then
   done
 
   # Print summary
-  echo ""
-  echo "════════════════════════════════════════════════════════════════"
-  echo "📊 PUSH SUMMARY"
-  echo "════════════════════════════════════════════════════════════════"
-  echo ""
-  echo "✅ Successful: ${#SUCCESS_PROJECTS[@]} projects"
-  echo "❌ Failed: ${#FAILED_PROJECTS[@]} projects"
-  echo "🔐 Auth Required: ${#AUTH_FAILED_PROJECTS[@]} projects"
-  echo "⏭️  Skipped: ${#SKIPPED_PROJECTS[@]} projects"
-  echo ""
-
-  # List auth-failed projects
-  if [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]]; then
-    echo "Credentials Required (no SSH key or access):"
-    echo "────────────────────────────────────────────────────────────────"
-    for project in "${AUTH_FAILED_PROJECTS[@]}"; do
-      printf "  🔐 %-30s → %s\n" "${project}" "credentials required"
-    done
-    echo ""
-  fi
-
-  # List failed projects with reasons
-  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]]; then
-    echo "Failed Projects:"
-    echo "────────────────────────────────────────────────────────────────"
-    for project in "${FAILED_PROJECTS[@]}"; do
-      reason="${FAILURE_REASONS[$project]}"
-      printf "  ❌ %-30s → %s\n" "${project}" "${reason}"
-    done
-    echo ""
-  fi
-
-  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]] || [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]]; then
-    exit 1
-  else
+  if print_push_summary; then
     echo "All repositories pushed successfully!"
     echo ""
+    exit 0
+  else
+    exit 1
   fi
-
-  exit 0
 fi
 
 # Single project push

@@ -1,5 +1,7 @@
 # Claude AI Assistant Notes
 
+> 🔀 **Session history (refocus)**: See [docs/refocus/INDEX.md](docs/refocus/INDEX.md) for incoming briefs and outbound spawns.
+
 > **For overall environment context, see: `/home/claude/workspace/ainotes/ainotes.md`**
 
 ## Project Overview
@@ -523,6 +525,22 @@ esac
   | shared | Read/Write | Read/Write |
   | administrators | Read/Write | No access |
   | developers | No access | Read/Write |
+
+### Session: 2026-07-03
+- **Added `skills` positional trigger to gitpull & gitpush**
+  - `gitpull skills` / `gitpush skills` operate on ONLY the `~/.claude` skill
+    collections (each `~/.claude/skills/<collection>/` is its own `claude-skills/*`
+    GitLab clone), skipping the `~/projects` sweep entirely.
+  - **DRY refactor**: extracted the inline skill loop (previously duplicated in the
+    `all` branch) into `pull_all_skills()` / `push_all_skills()`, plus shared
+    `print_pull_summary()` / `print_push_summary()`. Both the `all` and new `skills`
+    branches call the same functions — no copy-paste.
+  - New `skills` branch dispatches BEFORE single-project resolution, so it never
+    collides with a hypothetical `~/projects/skills` repo.
+  - Exit code: 0 clean, 1 on any failed/auth-required collection. Prints the standard
+    PULL/PUSH SUMMARY block. Usage/help text updated in both scripts.
+  - Discovery unchanged: glob `~/.claude/skills/*/`, keep dirs where `.git` exists
+    (non-git `idiot/` correctly skipped).
 
 ### Session: 2025-12-07
 - **Created claudeauto - Sandboxed Autonomous Mode Launcher**

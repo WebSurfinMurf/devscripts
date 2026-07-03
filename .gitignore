@@ -51,3 +51,4 @@ __pycache__/
 .cache/
 # auto-generated resume briefing (project-status skill)
 docs/project-status.md
+docs/refocus/INDEX.md
