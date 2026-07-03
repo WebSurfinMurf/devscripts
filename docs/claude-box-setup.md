@@ -80,12 +80,16 @@ You do **not** clone or symlink those separately — they ride inside the collec
 # collections are git-backed and discovered:
 for d in ~/.claude/skills/*/; do [[ -d "$d.git" ]] && echo "git: $d"; done
 
-# launch Claude Code and confirm the namespaced skills appear:
+# launch (or exit + resume) Claude Code and confirm the namespaced skills appear:
 #   claude-shared:*   (everyone)
 #   claude-admin:*    (admin)  |  claude-dev:*  (developer)
 ```
 
-If the namespaced skills show up → you're done. If they don't, see Troubleshooting §6.
+**How registration works (confirmed):** Claude Code **auto-discovers** each collection
+via its `~/.claude/skills/<collection>/.claude-plugin/plugin.json` on launch. There is
+**no `/plugin install` step** and `installed_plugins.json` stays `{}` — that's expected,
+not a problem. If skills don't appear immediately after cloning, **exit and resume**
+Claude Code so discovery re-runs. If they still don't appear, see Troubleshooting §6.
 
 ---
 
@@ -111,7 +115,7 @@ To update the Anthropic marketplaces instead, use Claude Code's `/plugin` — no
 | `gitpull skills` prints a clean summary but syncs nothing | Collections never cloned (pre-plugin flat layout) | Do the §3 clones |
 | `git clone` of a collection → permission denied | Your role isn't granted on that repo | Confirm group membership; `claude-shared`/`claude-dev` are shared with `developers`, `claude-admin` is admin-only |
 | `~/.claude/output-styles` dangling symlink | `claude-shared` not cloned yet | Clone `claude-shared` (§3); the symlink then resolves |
-| Namespaced skills don't appear after cloning | Plugin not registered / discovery issue | Verify `~/.claude/skills/<collection>/.claude-plugin/` exists; check Claude Code plugin docs; ask administrator |
+| Namespaced skills don't appear after cloning | Discovery hasn't re-run | **Exit and resume** Claude Code — registration is auto-discovery of `.claude-plugin/plugin.json` on launch. Verify that file exists in the collection. `installed_plugins.json` staying `{}` is normal. |
 | Cross-user path in `~/.claude/plugins/known_marketplaces.json` (`installLocation` points at another user's home) | Vestigial marketplace config; currently unused (`installed_plugins.json = {}`) | Cosmetic — correct it to your home if you like, but nothing depends on it |
 
 **Migrating an old box?** If you have `*.pre-plugin-bak` dirs, **do not delete them** until
