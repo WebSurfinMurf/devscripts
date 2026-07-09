@@ -225,23 +225,12 @@ fi
 echo ""
 
 #
-# USB BACKUP ROTATION (optional — only if USB mounted)
+# USB BACKUP ROTATION — REMOVED 2026-07-05.
+# Superseded by restic (see projects/backups/restic/). The old
+# copy-backups-to-usb.sh job copied stale tarballs from /mnt/backup-local and
+# repeatedly filled /mnt/backup to 100%. Do NOT re-add — restic handles backup
+# retention on /mnt/backup now.
 #
-USB_SCRIPT="/home/administrator/projects/data/copy-backups-to-usb.sh"
-if [ -f "$USB_SCRIPT" ] && mountpoint -q /mnt/backup 2>/dev/null; then
-    echo -e "${BLUE}[bonus] USB backup rotation${NC}"
-    USB_BEFORE=$(df -h /mnt/backup | tail -1 | awk '{print $5}')
-    echo "  USB drive: $USB_BEFORE full"
-    if [ "$DRY_RUN" = true ]; then
-        step_dry "run copy-backups-to-usb.sh"
-    elif bash "$USB_SCRIPT" 2>/dev/null; then
-        USB_AFTER=$(df -h /mnt/backup | tail -1 | awk '{print $5}')
-        step_ok "USB: $USB_BEFORE -> $USB_AFTER"
-    else
-        step_skip "USB copy script had issues"
-    fi
-    echo ""
-fi
 
 #
 # FINAL STATE

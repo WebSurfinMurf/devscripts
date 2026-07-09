@@ -1,0 +1,11 @@
+################################################################################
+# disk-reclaim cron — deploy to /etc/cron.d/disk-reclaim (root, 0644)
+#   sudo cp /home/administrator/projects/devscripts/disk-reclaim.cron /etc/cron.d/disk-reclaim
+#   sudo chmod 644 /etc/cron.d/disk-reclaim
+################################################################################
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+
+# Weekly root-fs reclaim — Sunday 23:00 (Sunday night). Runs as root.
+# Clear of: cleanserver.sh (Sun 02:00), restic prune (Sun 05:00), daily backup (04:00).
+0 23 * * 0  root  /home/administrator/projects/devscripts/disk-reclaim.sh >> /var/log/disk-reclaim.log 2>&1
