@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail   # exit on error, undefined var, or pipeline failure
 
-# Usage: gitpull [-gitlab] <project-name|all|skills|.>
+# Usage: gitpull [-gitlab] [--force] <project-name|all|skills|.>
 # Example: gitpull MyNewApp
 #          gitpull -gitlab claudecodeconfig
 #          gitpull all
 #          gitpull skills (refresh ~/.claude skill collections only)
 #          gitpull . (uses current directory)
+#          gitpull --force <project> (bypass the dirty-worktree guard)
 
 # Parse arguments
 FORCE_GITLAB=false
-if [[ "${1:-}" == "-gitlab" ]]; then
-  FORCE_GITLAB=true
-  shift
-fi
+FORCE_RESET=false
+while [[ "${1:-}" == "-gitlab" || "${1:-}" == "--force" ]]; do
+  case "$1" in
+    -gitlab) FORCE_GITLAB=true; shift ;;
+    --force) FORCE_RESET=true; shift ;;
+  esac
+done
 
 # check for required project name
 if [ $# -ne 1 ]; then
-  echo "Usage: $0 [-gitlab] <project-name|all|skills|.>"
+  echo "Usage: $0 [-gitlab] [--force] <project-name|all|skills|.>"
   echo "  Use '-gitlab' to force GitLab remote for new clones"
+  echo "  Use '--force' to bypass the dirty-worktree guard (unconditional hard reset)"
   echo "  Use 'all' to pull all git repositories in projects directory"
   echo "  Use 'skills' to pull only the ~/.claude skill collections"
   echo "  Use '.' to pull current directory"
@@ -46,6 +51,41 @@ else
 fi
 BASE_DIR="${HOME}/projects"
 DEFAULT_BRANCH="main"
+
+# Prints a self-contained, copy-pasteable prompt block describing a dirty
+# repo the hard-reset guard refused to touch. ANSI-free so terminal
+# copy-paste stays clean.
+print_dirty_guard_prompt() {
+  local repo_dir="$1"
+  local remote_url="$2"
+  local branch="$3"
+  local modified_files="$4"
+  local unpushed_count="$5"
+
+  echo "❌ REFUSING to reset '${repo_dir}' — working tree has changes 'git reset --hard' would destroy."
+  echo ""
+  echo "──────── COPY EVERYTHING BELOW AND PASTE TO YOUR LLM ────────"
+  echo "gitpull refused to update a repo because the working tree has"
+  echo "changes that \`git reset --hard\` would permanently destroy."
+  echo ""
+  echo "Repo:   ${repo_dir}"
+  echo "Remote: ${remote_url}"
+  echo "Branch: ${branch}"
+  echo ""
+  if [[ -n "${modified_files}" ]]; then
+    echo "Modified tracked files (WOULD BE DESTROYED):"
+    echo "${modified_files}" | sed 's/^/  /'
+    echo ""
+  fi
+  if [[ "${unpushed_count}" -gt 0 ]]; then
+    echo "Unpushed local commits (WOULD BE DISCARDED): ${unpushed_count}"
+    echo ""
+  fi
+  echo "Please: review these changes, decide what is worth keeping, commit"
+  echo "and push what should be kept, discard the rest, then confirm it is"
+  echo "safe to re-run \`gitpull\`."
+  echo "─────────────────────────────────────────────────────────────"
+}
 
 # Function to pull a single project
 pull_single_project() {
@@ -109,7 +149,7 @@ pull_single_project() {
         sleep $WAIT_TIME
       fi
 
-      FETCH_OUTPUT=$(timeout 7 git fetch --depth=1 origin "${DEFAULT_BRANCH}" 2>&1)
+      FETCH_OUTPUT=$(timeout 7 git fetch origin "${DEFAULT_BRANCH}" 2>&1)
       FETCH_EXIT=$?
 
       # Check for credential/authentication failures (don't retry these)
@@ -133,6 +173,16 @@ pull_single_project() {
       echo "❌ CREDENTIALS REQUIRED - skipping ${project_name}"
       return 2  # Special exit code for auth failures
     elif [ "$FETCH_SUCCESS" = "true" ]; then
+      if [[ "${FORCE_RESET}" != "true" ]]; then
+        MODIFIED_FILES=$(git status --porcelain --untracked-files=no 2>/dev/null || true)
+        UNPUSHED_COUNT=$(git rev-list --count "origin/${DEFAULT_BRANCH}..HEAD" 2>/dev/null || echo 0)
+        if [[ -n "${MODIFIED_FILES}" ]] || [[ "${UNPUSHED_COUNT}" -gt 0 ]]; then
+          REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "${repo_ssh}")
+          print_dirty_guard_prompt "${target_dir}" "${REMOTE_URL}" "${DEFAULT_BRANCH}" "${MODIFIED_FILES}" "${UNPUSHED_COUNT}"
+          return 3  # Special exit code for dirty-worktree guard
+        fi
+      fi
+
       git checkout "${DEFAULT_BRANCH}"
       git reset --hard "origin/${DEFAULT_BRANCH}"
       echo "✅ Updated ${project_name} to latest ${DEFAULT_BRANCH}."
@@ -242,6 +292,8 @@ pull_all_skills() {
       if [[ $EXIT_CODE -eq 2 ]] || echo "$OUTPUT" | grep -qi "CREDENTIALS REQUIRED"; then
         AUTH_FAILED_PROJECTS+=("${skills_name}")
         FAILURE_REASONS["${skills_name}"]="credentials required"
+      elif [[ $EXIT_CODE -eq 3 ]]; then
+        DIRTY_PROJECTS+=("${skills_name}")
       elif [[ $EXIT_CODE -eq 0 ]] && ! echo "$OUTPUT" | grep -qi "could not\|failed"; then
         SUCCESS_PROJECTS+=("${skills_name}")
       else
@@ -275,8 +327,19 @@ print_pull_summary() {
   echo "✅ Successful: ${#SUCCESS_PROJECTS[@]} projects"
   echo "❌ Failed: ${#FAILED_PROJECTS[@]} projects"
   echo "🔐 Auth Required: ${#AUTH_FAILED_PROJECTS[@]} projects"
+  echo "🔒 Dirty — skipped: ${#DIRTY_PROJECTS[@]} projects"
   echo "⏭️  Skipped: ${#SKIPPED_PROJECTS[@]} projects"
   echo ""
+
+  # List dirty (guard-refused) projects
+  if [[ ${#DIRTY_PROJECTS[@]} -gt 0 ]]; then
+    echo "Dirty — skipped (uncommitted work, see prompt block above):"
+    echo "────────────────────────────────────────────────────────────────"
+    for project in "${DIRTY_PROJECTS[@]}"; do
+      printf "  🔒 %-30s → uncommitted changes or unpushed commits\n" "${project}"
+    done
+    echo ""
+  fi
 
   # List auth-failed projects
   if [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]]; then
@@ -299,7 +362,7 @@ print_pull_summary() {
     echo ""
   fi
 
-  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]] || [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]]; then
+  if [[ ${#FAILED_PROJECTS[@]} -gt 0 ]] || [[ ${#AUTH_FAILED_PROJECTS[@]} -gt 0 ]] || [[ ${#DIRTY_PROJECTS[@]} -gt 0 ]]; then
     return 1
   fi
   return 0
@@ -315,6 +378,7 @@ if [[ "${PROJECT}" == "skills" ]]; then
   declare -a FAILED_PROJECTS=()
   declare -a SKIPPED_PROJECTS=()
   declare -a AUTH_FAILED_PROJECTS=()
+  declare -a DIRTY_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
   pull_all_skills
@@ -338,6 +402,7 @@ if [[ "${PROJECT}" == "all" ]]; then
   declare -a FAILED_PROJECTS=()
   declare -a SKIPPED_PROJECTS=()
   declare -a AUTH_FAILED_PROJECTS=()
+  declare -a DIRTY_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
   # === CLAUDE PLUGIN REPOS (each ~/.claude/skills/<plugin>/ is its own git repo) ===
@@ -403,6 +468,8 @@ if [[ "${PROJECT}" == "all" ]]; then
         # Auth failure - tracked separately
         AUTH_FAILED_PROJECTS+=("${repo_name}")
         FAILURE_REASONS["${repo_name}"]="credentials required"
+      elif [[ $EXIT_CODE -eq 3 ]]; then
+        DIRTY_PROJECTS+=("${repo_name}")
       elif [[ $EXIT_CODE -eq 0 ]] && ! echo "$OUTPUT" | grep -qi "could not\|failed"; then
         SUCCESS_PROJECTS+=("${repo_name}")
       else
@@ -459,6 +526,8 @@ echo "📊 PULL SUMMARY"
 echo "════════════════════════════════════════════════════════════════"
 if [[ $EXIT_CODE -eq 0 ]]; then
   echo "  ✅ ${PROJECT} — pulled successfully"
+elif [[ $EXIT_CODE -eq 3 ]]; then
+  echo "  🔒 ${PROJECT} — dirty, skipped (see prompt block above; use --force to override)"
 else
   echo "  ❌ ${PROJECT} — pull failed (exit code: ${EXIT_CODE})"
 fi
