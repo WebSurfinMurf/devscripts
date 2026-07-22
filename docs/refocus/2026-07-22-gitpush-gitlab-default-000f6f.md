@@ -1,12 +1,12 @@
 ---
 id: 2026-07-22-gitpush-gitlab-default-000f6f
-status: in-progress
+status: result
 child_session_id: 000f6f5f-5b52-4019-b3b7-9e17745af11b
 spawn_mode: execute
 tier: medium
 spawned_at: 2026-07-22T03:15:35Z
 launched_at: 2026-07-22T03:30:39Z
-completed_at: null
+completed_at: 2026-07-22T03:32:55Z
 source_dir: /home/administrator/projects/claudecodeconfig
 source_session_id: unknown
 dest_dir: /home/administrator/projects/devscripts
@@ -85,4 +85,30 @@ GitLab by default; GitHub should require a deliberate opt-in.
 ---
 
 ## Result
-<empty until child writes>
+
+**Status:** completed
+
+### Definition-of-Done met
+- ✓ NEW repo (no `.git`) defaults to `ssh://git@gitlab.ai-servicers.com:2222/administrators/<project>.git` — verified in a throwaway `$TMPDIR` dir, resolver prints `(GitLab - new)`.
+- ✓ Explicit `-github` flag added as a leading opt-in flag (mirrors `gitpull -gitlab`); verified it yields `(GitHub - new, explicit -github)`.
+- ✓ EXISTING repos untouched: origin auto-detection still wins. Verified a GitLab-origin repo and a GitHub-origin repo both resolve to their current remote, **including when a contradicting flag is passed** (`-gitlab` against a GitHub-origin repo still resolves GitHub). `git remote get-url origin` unchanged on both after the runs.
+- ✓ All GitHub-hardcoded user-facing strings made host-aware: remote-add messages (x2), "Checking if repository exists on …", the "DOES NOT EXIST" banner (now `DOES NOT EXIST ON REMOTE (<label>)`), the "Pushing to …" line, the closing `Repository URL`, and the `all`-mode failure-reason classifier grep (updated in lockstep with the banner).
+- ✓ `bash -n gitpush` passes; six-case dry resolution matrix run with `.nogit` markers so no network/push occurred.
+
+### Summary
+`gitpush` no longer silently lands brand-new internal projects on public GitHub. The new-repo default is the internal GitLab using `gitinit`'s exact URL convention (SSH port 2222, `administrators` group), with `-gitlab`/`-github` leading flags selecting the platform for NEW repos only. Existing-repo origin auto-detection is byte-for-byte the same logic, now parameterised by `GITLAB_HOST` — no remote is ever re-pointed, and the flags are deliberately ignored on existing repos. The local `github_url` variable was renamed `remote_url` and paired with `remote_label` / `web_url` so every user-facing string derives from the resolved host rather than a hardcoded "GitHub". The GitLab guidance block for a missing remote points at `gitinit -gitlab` (with a manual `projects/new` fallback) instead of the GitHub web flow. Committed as `edf3152` and pushed to `administrators/devscripts`.
+
+### Artifacts produced
+- `gitpush` — new-repo GitLab default, `-gitlab`/`-github` flags, host-aware output, classifier grep updated.
+- `CLAUDE.md` — gitpush inventory entry, usage examples, and a `Session: 2026-07-22` change record.
+
+### Suggested follow-ups (parent decides)
+- `~/projects/devscripts` · `gitpush-gitleaks-pre-push` — the pending secret-scanning gate before push (explicitly out of scope here).
+- `~/projects/devscripts` · `gitversion-gitlab-default` — `gitversion` was not reviewed; if it contains the same GitHub-default fallthrough it has the same exposure. Not touched (out of brief scope).
+- Remediation of the ~26 EXISTING repos already on public GitHub is a separate operational track — this change only stops *new* ones. Nothing was migrated or re-pointed.
+
+### Material changes (for /context-save)
+- `docs/context/conventions.md` — new-repo git remote default is internal GitLab (`administrators` group, port 2222); GitHub requires explicit `-github`.
+- `docs/context/interfaces.md` — `gitpush` CLI surface gained leading `-gitlab` / `-github` flags.
+- `docs/context/invariants.md` — gitpush must never re-point an existing origin; the `all`-mode failure classifier grep is coupled to the "DOES NOT EXIST ON REMOTE" banner wording.
+
