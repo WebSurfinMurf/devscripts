@@ -1,14 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail   # Strict mode
 
-# Usage: gitpush <GitHub-project-name|all|skills|.> [release-description]
+# Usage: gitpush [-gitlab|-github] <project-name|all|skills|.> [release-description]
 # Example: gitpush MyApp "Fixed bug in auth"
 #          gitpush all "Weekly updates"
 #          gitpush skills "Skill tweaks" (push ~/.claude skill collections only)
 #          gitpush . "Quick fix" (uses current directory)
+#          gitpush -github MyPublicApp "Initial commit" (NEW repo → public GitHub)
+#
+# NEW repositories (no .git yet) default to the internal GitLab. Pass -github to
+# opt a brand-new repo into public GitHub instead. EXISTING repositories always
+# keep their current origin — these flags never re-point an existing remote.
+
+# Parse optional platform flag (applies to NEW repos only)
+NEW_REPO_PLATFORM="gitlab"
+while [[ "${1:-}" == "-gitlab" || "${1:-}" == "-github" ]]; do
+  case "$1" in
+    -gitlab) NEW_REPO_PLATFORM="gitlab"; shift ;;
+    -github) NEW_REPO_PLATFORM="github"; shift ;;
+  esac
+done
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <GitHub-project-name|all|skills|.> [release-description]"
+  echo "Usage: $0 [-gitlab|-github] <project-name|all|skills|.> [release-description]"
+  echo "  NEW repos default to GitLab (administrators group)"
+  echo "  Use '-github' to put a NEW repo on public GitHub instead"
+  echo "  Existing repos always keep their current origin (flags are ignored)"
   echo "  Use 'all' to push all git repositories in projects directory"
   echo "  Use 'skills' to push only the ~/.claude skill collections"
   echo "  Use '.' to push current directory"
@@ -39,7 +56,10 @@ fi
 DESC="${1:-}"
 
 # Variables
-OWNER="WebSurfinMurf"  # Fixed: was \OWNER
+OWNER="WebSurfinMurf"          # GitHub owner — only consulted on the GitHub path
+GITLAB_HOST="gitlab.ai-servicers.com"
+GITLAB_SSH_PORT="2222"
+GITLAB_GROUP="administrators"  # matches gitinit's default group
 BASE_DIR="${HOME}/projects"
 DEFAULT_BRANCH="main"
 
@@ -48,26 +68,41 @@ push_single_project() {
   local project_name="$1"
   local description="$2"
   local target_dir="${3:-${BASE_DIR}/${project_name}}"  # Optional 3rd param for custom dir
-  local github_url=""
-  local remote_type="github"
+  local remote_url=""
+  local remote_type="gitlab"
+  local remote_label="GitLab"
+  local web_url=""
 
   # Auto-detect remote type from existing repo
   if [ -d "${target_dir}/.git" ]; then
     cd "${target_dir}"
-    if git remote get-url origin 2>/dev/null | grep -q "gitlab.ai-servicers.com"; then
-      github_url="ssh://git@gitlab.ai-servicers.com:2222/administrators/${project_name}.git"
+    if git remote get-url origin 2>/dev/null | grep -q "${GITLAB_HOST}"; then
+      remote_url="ssh://git@${GITLAB_HOST}:${GITLAB_SSH_PORT}/${GITLAB_GROUP}/${project_name}.git"
       remote_type="gitlab"
       echo "🔧 gitpush for '${project_name}' (GitLab) at ${target_dir}"
     else
-      github_url="git@github.com:${OWNER}/${project_name}.git"
+      remote_url="git@github.com:${OWNER}/${project_name}.git"
       remote_type="github"
       echo "🔧 gitpush for '${project_name}' (GitHub) at ${target_dir}"
     fi
-  else
-    # New project defaults to GitHub
-    github_url="git@github.com:${OWNER}/${project_name}.git"
+  elif [[ "${NEW_REPO_PLATFORM}" == "github" ]]; then
+    # New project, explicit -github opt-in
+    remote_url="git@github.com:${OWNER}/${project_name}.git"
     remote_type="github"
-    echo "🔧 gitpush for '${project_name}' (GitHub - new) at ${target_dir}"
+    echo "🔧 gitpush for '${project_name}' (GitHub - new, explicit -github) at ${target_dir}"
+  else
+    # New project defaults to the internal GitLab
+    remote_url="ssh://git@${GITLAB_HOST}:${GITLAB_SSH_PORT}/${GITLAB_GROUP}/${project_name}.git"
+    remote_type="gitlab"
+    echo "🔧 gitpush for '${project_name}' (GitLab - new) at ${target_dir}"
+  fi
+
+  if [[ "${remote_type}" == "gitlab" ]]; then
+    remote_label="GitLab"
+    web_url="https://${GITLAB_HOST}/${GITLAB_GROUP}/${project_name}"
+  else
+    remote_label="GitHub"
+    web_url="https://github.com/${OWNER}/${project_name}"
   fi
 
   # Respect .nogit for single-project runs too
@@ -138,42 +173,59 @@ push_single_project() {
     fi
     
     # Add remote origin
-    echo "🔗 Adding GitHub remote..."
-    git remote add origin "${github_url}" 2>/dev/null || {
+    echo "🔗 Adding ${remote_label} remote..."
+    git remote add origin "${remote_url}" 2>/dev/null || {
       echo "   Remote already exists, updating URL..."
-      git remote set-url origin "${github_url}"
+      git remote set-url origin "${remote_url}"
     }
-    
+
     # Try to push first to see if repo exists
-    echo "🔍 Checking if repository exists on GitHub..."
+    echo "🔍 Checking if repository exists on ${remote_label}..."
     git push -u origin "${DEFAULT_BRANCH}" 2>/dev/null && {
       echo "✅ Repository exists and push successful!"
     } || {
       # Repository doesn't exist, provide clear instructions
       echo ""
       echo "════════════════════════════════════════════════════════════════"
-      echo "⚠️  REPOSITORY DOES NOT EXIST ON GITHUB"
+      echo "⚠️  REPOSITORY DOES NOT EXIST ON REMOTE (${remote_label})"
       echo "════════════════════════════════════════════════════════════════"
       echo ""
       echo "📝 Please create the repository first:"
       echo ""
-      echo "   1. Open your browser and go to:"
-      echo "      👉 https://github.com/new"
+      if [[ "${remote_type}" == "gitlab" ]]; then
+        echo "   1. From this directory, run:"
+        echo "      👉 gitinit -gitlab            # creates ${GITLAB_GROUP}/${project_name} (private)"
+        echo "      (use 'gitinit -gitlab <group>' for a different group)"
+        echo ""
+        echo "   2. Or create it manually in the browser:"
+        echo "      👉 https://${GITLAB_HOST}/projects/new"
+        echo "      • Project name: ${project_name}"
+        echo "      • Namespace: ${GITLAB_GROUP}"
+        echo "      • Visibility: 🔒 Private"
+        echo "      ⚠️  DO NOT initialize with a README"
+      else
+        echo "   1. Open your browser and go to:"
+        echo "      👉 https://github.com/new"
+        echo ""
+        echo "   2. Fill in:"
+        echo "      • Repository name: ${project_name}"
+        echo "      • Description: (optional)"
+        echo "      • Set as 🔒 Private or 🌍 Public"
+        echo ""
+        echo "   3. IMPORTANT:"
+        echo "      ⚠️  DO NOT check 'Add a README file'"
+        echo "      ⚠️  DO NOT add .gitignore"
+        echo "      ⚠️  DO NOT choose a license"
+        echo ""
+        echo "   4. Click the green 'Create repository' button"
+      fi
       echo ""
-      echo "   2. Fill in:"
-      echo "      • Repository name: ${project_name}"
-      echo "      • Description: (optional)"
-      echo "      • Set as 🔒 Private or 🌍 Public"
-      echo ""
-      echo "   3. IMPORTANT:"
-      echo "      ⚠️  DO NOT check 'Add a README file'"
-      echo "      ⚠️  DO NOT add .gitignore"
-      echo "      ⚠️  DO NOT choose a license"
-      echo ""
-      echo "   4. Click the green 'Create repository' button"
-      echo ""
-      echo "   5. After creating, run this command again:"
-      echo "      gitpush ${project_name} \"${description}\""
+      echo "   Then run this command again:"
+      if [[ "${remote_type}" == "github" ]]; then
+        echo "      gitpush -github ${project_name} \"${description}\""
+      else
+        echo "      gitpush ${project_name} \"${description}\""
+      fi
       echo ""
       echo "════════════════════════════════════════════════════════════════"
       echo ""
@@ -209,8 +261,8 @@ push_single_project() {
     
     # Check if remote exists
     if ! git remote | grep -q origin; then
-      echo "🔗 Adding GitHub remote..."
-      git remote add origin "${github_url}"
+      echo "🔗 Adding ${remote_label} remote..."
+      git remote add origin "${remote_url}"
     fi
     
     # Fetch latest changes with timeout and retry logic
@@ -295,7 +347,7 @@ push_single_project() {
     # Check if there are unpushed commits
     if git rev-list --count origin/${DEFAULT_BRANCH}..HEAD 2>/dev/null | grep -q '^[1-9]' || \
        ! git rev-parse --verify origin/${DEFAULT_BRANCH} &>/dev/null; then
-      echo "📤 Found unpushed commits. Pushing to GitHub..."
+      echo "📤 Found unpushed commits. Pushing to ${remote_label}..."
       git push -u origin "${DEFAULT_BRANCH}"
       return 0
     fi
@@ -357,7 +409,7 @@ push_single_project() {
   fi
 
   echo ""
-  echo "🔗 Repository URL: https://github.com/${OWNER}/${project_name}"
+  echo "🔗 Repository URL: ${web_url}"
 }
 
 # Push only the ~/.claude skill collections (each ~/.claude/skills/<plugin>/ is its
@@ -544,7 +596,7 @@ if [[ "${PROJECT}" == "all" ]]; then
           FAILURE_REASONS["${repo_name}"]="needs merge"
         elif echo "$OUTPUT" | grep -qi "conflict"; then
           FAILURE_REASONS["${repo_name}"]="merge conflict"
-        elif echo "$OUTPUT" | grep -qi "DOES NOT EXIST ON GITHUB"; then
+        elif echo "$OUTPUT" | grep -qi "DOES NOT EXIST ON REMOTE"; then
           FAILURE_REASONS["${repo_name}"]="repo does not exist"
         elif echo "$OUTPUT" | grep -qi "dubious ownership"; then
           FAILURE_REASONS["${repo_name}"]="ownership issue"

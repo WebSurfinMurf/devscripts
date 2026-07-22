@@ -105,7 +105,12 @@ devscripts/
 - Supports single project, current directory (.), or all projects
 - 3-attempt retry with exponential backoff
 - Runs gitsyncfirst.sh if present
-- Usage: `gitpush <project|.|all> "commit message"`
+- **NEW repos (no `.git`) default to internal GitLab** (`administrators` group,
+  `ssh://git@gitlab.ai-servicers.com:2222/administrators/<project>.git`)
+- `-github` opts a NEW repo into public GitHub instead (deliberate opt-in)
+- **Existing repos always keep their current origin** — the flags are ignored and
+  no remote is ever silently re-pointed
+- Usage: `gitpush [-gitlab|-github] <project|.|all|skills> "commit message"`
 
 **gitpull** - Git Pull Helper
 - Pulls latest changes from remote
@@ -314,6 +319,9 @@ cd ~/projects/mynewproject
 
 # Push single project
 ./gitpush ProjectName "Commit message"
+
+# Push a BRAND-NEW project to public GitHub instead of the default GitLab
+./gitpush -github ProjectName "Initial commit"
 
 # Push current directory (NEW)
 cd ~/projects/myproject
@@ -560,3 +568,19 @@ esac
   - Supports Claude Code, Gemini CLI, and Codex CLI
   - Agent registry: server.admin, server.dev, laptop.dev, gemini, codex
   - Status: Design complete, implementation pending
+
+### Session: 2026-07-22
+- **gitpush: NEW repos now default to GitLab, not GitHub** (security fix)
+  - Root cause of ~26 `~/projects` repos landing on public GitHub: a directory with
+    no `.git` fell through to `git@github.com:WebSurfinMurf/<project>.git`.
+  - New-repo default is now `ssh://git@gitlab.ai-servicers.com:2222/administrators/<project>.git`,
+    reusing `gitinit`'s URL convention (note SSH port **2222**).
+  - Added `-gitlab` / `-github` leading flags (mirrors `gitpull -gitlab`). `-github` is
+    the deliberate opt-in for public repos. Flags apply to NEW repos ONLY.
+  - **Existing repos are untouched** — origin auto-detection still wins and no remote
+    is ever re-pointed, even if a flag contradicts it. Verified on both a GitLab-origin
+    and a GitHub-origin throwaway repo.
+  - Host-aware output: remote-add/push messages, the "does not exist" banner (now
+    `DOES NOT EXIST ON REMOTE (<host>)`), the closing `Repository URL`, and the matching
+    grep in the `all`-mode failure-reason classifier (which would have silently broken).
+  - GitLab guidance block points at `gitinit -gitlab` rather than a manual web flow.
