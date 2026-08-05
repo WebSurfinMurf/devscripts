@@ -269,6 +269,13 @@ pull_single_project() {
 pull_all_skills() {
   CLAUDE_SKILLS_DIRS=()
   for _d in "${HOME}"/.claude/skills/*/; do
+    # Since the 2026-08-05 move to ~/projects/claude-skills/, these entries are
+    # SYMLINKS into that container, which `gitpull all` already pulls via its
+    # .gitgroup file. `-d "${_d}.git"` follows the symlink and would be true,
+    # so without this skip every harness repo gets `git reset --hard` TWICE per
+    # run. Real (non-symlink) clones here are still pulled, so a box that has
+    # not migrated yet keeps working.
+    [[ -L "${_d%/}" ]] && continue
     [[ -d "${_d}.git" ]] && CLAUDE_SKILLS_DIRS+=("${_d%/}")
   done
 
