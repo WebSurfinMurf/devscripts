@@ -268,13 +268,21 @@ pull_single_project() {
 # must be declared before calling. Shared by the 'all' and 'skills' branches.
 pull_all_skills() {
   CLAUDE_SKILLS_DIRS=()
+  local include_container="${1:-}"
+  # Harness repos moved to ~/projects/claude-skills/ on 2026-08-05. Include the
+  # container ONLY for the explicit `skills` subcommand: in `all` mode the
+  # container is already walked via its .gitgroup, and adding it here would
+  # `git reset --hard` every harness repo twice per run.
+  if [[ "${include_container}" == "with-container" ]]; then
+    for _d in "${HOME}"/projects/claude-skills/*/; do
+      [[ -d "${_d}.git" ]] && CLAUDE_SKILLS_DIRS+=("${_d%/}")
+    done
+  fi
+
+  # Legacy layout: real clones still living inside the plugin root. Entries that
+  # are SYMLINKS point back at the container and must be skipped, or the same
+  # repo is processed twice. A box that has not migrated keeps working.
   for _d in "${HOME}"/.claude/skills/*/; do
-    # Since the 2026-08-05 move to ~/projects/claude-skills/, these entries are
-    # SYMLINKS into that container, which `gitpull all` already pulls via its
-    # .gitgroup file. `-d "${_d}.git"` follows the symlink and would be true,
-    # so without this skip every harness repo gets `git reset --hard` TWICE per
-    # run. Real (non-symlink) clones here are still pulled, so a box that has
-    # not migrated yet keeps working.
     [[ -L "${_d%/}" ]] && continue
     [[ -d "${_d}.git" ]] && CLAUDE_SKILLS_DIRS+=("${_d%/}")
   done
@@ -388,7 +396,7 @@ if [[ "${PROJECT}" == "skills" ]]; then
   declare -a DIRTY_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
-  pull_all_skills
+  pull_all_skills with-container
 
   if print_pull_summary; then
     echo "All skill collections pulled successfully!"

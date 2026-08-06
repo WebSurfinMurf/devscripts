@@ -420,7 +420,22 @@ push_single_project() {
 # before calling. Shared by the 'all' and 'skills' branches.
 push_all_skills() {
   CLAUDE_SKILLS_DIRS=()
+  local include_container="${1:-}"
+  # Harness repos moved to ~/projects/claude-skills/ on 2026-08-05. Include the
+  # container ONLY for the explicit `skills` subcommand: in `all` mode the
+  # container is already walked via its .gitgroup, and adding it here would
+  # `git reset --hard` every harness repo twice per run.
+  if [[ "${include_container}" == "with-container" ]]; then
+    for _d in "${HOME}"/projects/claude-skills/*/; do
+      [[ -d "${_d}.git" ]] && CLAUDE_SKILLS_DIRS+=("${_d%/}")
+    done
+  fi
+
+  # Legacy layout: real clones still living inside the plugin root. Entries that
+  # are SYMLINKS point back at the container and must be skipped, or the same
+  # repo is processed twice. A box that has not migrated keeps working.
   for _d in "${HOME}"/.claude/skills/*/; do
+    [[ -L "${_d%/}" ]] && continue
     [[ -d "${_d}.git" ]] && CLAUDE_SKILLS_DIRS+=("${_d%/}")
   done
 
@@ -508,7 +523,7 @@ if [[ "${PROJECT}" == "skills" ]]; then
   declare -a AUTH_FAILED_PROJECTS=()
   declare -A FAILURE_REASONS=()
 
-  push_all_skills
+  push_all_skills with-container
 
   if print_push_summary; then
     echo "All skill collections pushed successfully!"
