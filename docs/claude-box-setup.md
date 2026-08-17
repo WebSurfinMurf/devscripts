@@ -100,7 +100,7 @@ gitpull skills     # pull latest for ALL cloned collections (skips the ~/project
 gitpush skills     # push your local skill edits back
 ```
 
-- Acts only on git-backed dirs under `~/.claude/skills/*/`; non-git local skills (e.g. `idiot/`) are skipped.
+- Acts only on git-backed dirs under `~/.claude/skills/*/`; non-git local skills (e.g. a loose `myskill/` dir) are skipped.
 - Exit `0` clean / `1` on any failed-or-auth-required collection; prints a PULL/PUSH SUMMARY.
 - **Update-only** — it syncs collections that already exist; it does **not** clone new ones. Do the one-time clones in §3 first (otherwise `gitpull skills` is a harmless no-op).
 
