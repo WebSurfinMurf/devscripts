@@ -36,7 +36,7 @@ devscripts/
 │   ├── updatelinux.sh               # System update automation
 │   └── cleanup                      # Legacy Docker container cleanup
 ├── Claude Code Management Scripts
-│   ├── claudeauto                   # Sandboxed autonomous mode launcher (NEW)
+│   ├── claudeauto  [REMOVED 2026-09-07 -> claude-skills/claude-shared/bin/aiauto]
 │   ├── claude-push                  # Push Claude config to GitLab
 │   ├── claude-pull                  # Pull Claude config from GitLab
 │   ├── claude-session               # Manage Claude session storage
@@ -560,6 +560,7 @@ esac
   - Hardcoded prompt instructs Claude about sandbox limitations
   - If changes needed outside project, writes handoff to shared folder
   - Usage: `claudeauto <project-name>` (e.g., `claudeauto nginx`)
+  - **REMOVED 2026-09-07**: superseded by `aiauto` (claude-skills/claude-shared/bin/aiauto) — adds -codex and -anti back ends, full-path tmux status-bar label, Windows shim. Skip-list file name unchanged (~/.claude/claudeauto-skip).
 
 - **Inter-AI Communication Protocol Design**
   - Design document: `/home/administrator/projects/ainotes/interai.md`
